@@ -111,15 +111,13 @@ async function startConsumers() {
 
     const data = JSON.parse(text);
 
-    if (data.Source === "Fusion") {
-      console.log("[CMD] Received Fusion-originated command.");
-    } else if (data.Data) {
+    if (data.Data) {
       Object.entries(data.Data).forEach(([id, value]) => {
-        if (componentMap[id]) {
+        if (componentMap[id] && value !== null && value !== undefined) {
           const packet = {
             Source: data.Source || "Unknown",
             "Time Stamp": data["Time Stamp"],
-            Data: { [id]: value }
+            Data: { [id]: value },
           };
           broadcastPacket("telemetry", packet);
         }
@@ -143,73 +141,69 @@ app.post("/api/simulate", (req, res) => {
 
   if (!component) return res.status(400).send("Invalid component ID");
 
-  if (simIntervals[id]) clearInterval(simIntervals[id]);
+  if (simIntervals[id]) {
+    clearInterval(simIntervals[id]);
+    delete simIntervals[id];
+  }
 
   if (component.data_type === "bool") {
-    // ✅ Bool control simulation: fixed 0 or 1
     const boolValue = (typeof value === "number") ? value : 0;
-
     simIntervals[id] = setInterval(() => {
       const packet = {
         Source: "Fusion",
         "Time Stamp": Math.floor(Date.now() / 1000),
-        Data: { [id]: boolValue }
+        Data: { [id]: boolValue },
       };
       broadcastPacket("telemetry", packet);
     }, simulationIntervalMs);
 
-    console.log(`[SIMULATE] Started simulating boolean ${id} as ${boolValue} every ${simulationIntervalMs}ms.`);
+    console.log(`[SIMULATE] Started simulating boolean ${id} as ${boolValue}`);
   } 
   else if (component.data_type === "float") {
     if (component.type === "sensor") {
-      // ✅ Float sensor: random between min and max
       if (min === undefined || max === undefined) {
-        return res.status(400).send("Missing min/max values for float sensor simulation");
+        return res.status(400).send("Missing min/max for sensor simulation");
       }
-
       simIntervals[id] = setInterval(() => {
         const randomValue = parseFloat((Math.random() * (max - min) + min).toFixed(2));
         const packet = {
           Source: "Fusion",
           "Time Stamp": Math.floor(Date.now() / 1000),
-          Data: { [id]: randomValue }
+          Data: { [id]: randomValue },
         };
         broadcastPacket("telemetry", packet);
       }, simulationIntervalMs);
 
-      console.log(`[SIMULATE] Started simulating float sensor ${id} between ${min}-${max} every ${simulationIntervalMs}ms.`);
-    }
+      console.log(`[SIMULATE] Started simulating float sensor ${id} between ${min}-${max}`);
+    } 
     else if (component.type === "control") {
-      // ✅ Float control: fixed set value
       const floatValue = (typeof value === "number") ? value : 0;
-
       simIntervals[id] = setInterval(() => {
         const packet = {
           Source: "Fusion",
           "Time Stamp": Math.floor(Date.now() / 1000),
-          Data: { [id]: floatValue }
+          Data: { [id]: floatValue },
         };
         broadcastPacket("telemetry", packet);
       }, simulationIntervalMs);
 
-      console.log(`[SIMULATE] Started simulating float control ${id} as ${floatValue} every ${simulationIntervalMs}ms.`);
+      console.log(`[SIMULATE] Started simulating float control ${id} as ${floatValue}`);
     }
   } 
   else {
     console.warn(`[SIMULATE] Unknown data type for ${id}`);
-    return res.status(400).send("Unsupported data type for simulation");
+    return res.status(400).send("Unsupported data type");
   }
 
   res.sendStatus(200);
 });
-
 
 app.post("/api/simulate/stop", (req, res) => {
   const { id } = req.body;
   if (simIntervals[id]) {
     clearInterval(simIntervals[id]);
     delete simIntervals[id];
-    console.log(`[SIMULATE] Stopped simulation for ${id}.`);
+    console.log(`[SIMULATE] Stopped simulation for ${id}`);
   }
   res.sendStatus(200);
 });
@@ -221,7 +215,7 @@ app.post("/api/no-sim", (req, res) => {
   const packet = {
     Source: "Fusion",
     "Time Stamp": Math.floor(Date.now() / 1000),
-    Data: { [id]: value }
+    Data: { [id]: value },
   };
   broadcastPacket("telemetry", packet);
 
@@ -232,16 +226,15 @@ app.post("/api/toggle-sim", (req, res) => {
   const { enabled } = req.body;
   globalSimEnabled = enabled;
   console.log(`[TOGGLE-SIM] Global simulation mode is now: ${enabled ? "ENABLED" : "DISABLED"}`);
-  res.sendStatus(200);
-});
 
-app.post("/api/set-interval", (req, res) => {
-  const { interval } = req.body;
-  if (interval < 25 || interval > 10000) {
-    return res.status(400).send("Interval must be between 25ms and 10000ms.");
+  if (!enabled) {
+    Object.keys(simIntervals).forEach((id) => {
+      clearInterval(simIntervals[id]);
+      delete simIntervals[id];
+      console.log(`[SIMULATE] Stopped simulation for ${id}`);
+    });
   }
-  simulationIntervalMs = interval;
-  console.log(`[INTERVAL] Simulation interval set to ${simulationIntervalMs}ms.`);
+
   res.sendStatus(200);
 });
 

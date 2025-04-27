@@ -27,9 +27,17 @@ document.addEventListener("DOMContentLoaded", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled }),
-        }).catch((err) => {
-            console.error("Error sending Sim toggle request:", err);
-        });
+        }).catch((err) => console.error("Error sending Sim toggle request:", err));
+
+        if (!enabled) {
+            // Clear all blue glows and reset simulation tracking
+            document.querySelectorAll(".component-card.simulating").forEach((card) => {
+                card.classList.remove("simulating");
+            });
+            Object.keys(isSimulating).forEach((id) => {
+                isSimulating[id] = false;
+            });
+        }
     });
 
     simIntervalInput.addEventListener("input", () => {
@@ -44,9 +52,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ interval }),
-            }).catch((err) => {
-                console.error("Error updating simulation interval:", err);
-            });
+            }).catch((err) => console.error("Error updating simulation interval:", err));
         }
     });
 
@@ -69,13 +75,11 @@ document.addEventListener("DOMContentLoaded", async () => {
             card.appendChild(valueDiv);
             valueDisplays[component.id] = valueDiv;
 
-            // Only show toggle if Sim mode is active
             if (simToggle.checked) {
                 const toggleLabel = createToggleSwitch(component.id);
                 card.appendChild(toggleLabel);
             }
 
-            // --- Sensor Handling (float sensors) ---
             if (component.type === "sensor" && simToggle.checked) {
                 const minInput = document.createElement("input");
                 const maxInput = document.createElement("input");
@@ -112,9 +116,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 card.appendChild(setBtn);
             }
 
-            // --- Control Handling ---
             if (component.type === "control") {
-                // --- Bool Control ---
                 if (component.data_type === "bool") {
                     const openBtn = document.createElement("button");
                     const closeBtn = document.createElement("button");
@@ -123,13 +125,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     const updateStatusColor = (state) => {
                         card.classList.remove("neutral", "status-on", "status-off");
-                        card.classList.add(state === 1 ? "status-off" : "status-on"); // 1 = closed = yellow, 0 = open = green
+                        card.classList.add(state === 1 ? "status-off" : "status-on");
                     };
 
                     openBtn.addEventListener("click", () => {
-                        const endpoint = simToggle.checked
-                            ? "/api/simulate"
-                            : "/api/no-sim";
+                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -143,9 +143,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     });
 
                     closeBtn.addEventListener("click", () => {
-                        const endpoint = simToggle.checked
-                            ? "/api/simulate"
-                            : "/api/no-sim";
+                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -162,7 +160,6 @@ document.addEventListener("DOMContentLoaded", async () => {
                     card.appendChild(closeBtn);
                 }
 
-                // --- Float Control ---
                 if (component.data_type === "float") {
                     const inputWrapper = document.createElement("div");
                     inputWrapper.style.display = "flex";
@@ -191,17 +188,18 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const value = parseFloat(valueInput.value);
                         if (isNaN(value)) return;
 
-                        const endpoint = simToggle.checked
-                            ? "/api/simulate"
-                            : "/api/no-sim";
+                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
                         fetch(endpoint, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value }), 
+                            body: JSON.stringify({ id: component.id, value }),
                         }).catch((err) => console.error(err));
+
+                        isSimulating[component.id] = true;
+                        card.classList.add("simulating");
                     });
 
                     card.appendChild(setBtn);
@@ -241,12 +239,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         toggle.addEventListener("change", () => {
             if (!toggle.checked) {
-                // If unchecked, stop simulation
                 fetch("/api/simulate/stop", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ id }),
                 }).catch((err) => console.error(err));
+
+                const card = document.querySelector(`[data-id="${id}"]`);
+                if (card) {
+                    card.classList.remove("simulating");
+                }
+                isSimulating[id] = false;
             }
         });
 
@@ -255,6 +258,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     renderUI();
 
+    // --- Corrected EventSource Listener ---
     const eventSource = new EventSource("/events");
     eventSource.onmessage = (event) => {
         const message = JSON.parse(event.data);
@@ -266,71 +270,39 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         if (message.type === "telemetry") {
             const telemetry = message.payload;
-            const id = Object.keys(telemetry.Data)[0];
-            const value = telemetry.Data[id];
 
-            if (id === undefined || value === null || value === undefined) {
-                console.warn(
-                    `[TELEMETRY] Ignoring invalid telemetry: ${JSON.stringify(telemetry)}`
-                );
-                return;
-            }
-
-            latestValues[id] = value;
-
-            if (valueDisplays[id]) {
-                valueDisplays[id].textContent = `Last Value: ${value}`;
-            }
-
-            const card = document.querySelector(`[data-id="${id}"]`);
-            if (!card) return;
-
-            const component = components.find((c) => c.id === id);
-            if (!component) {
-                console.warn(`[TELEMETRY] No component config found for ID: ${id}`);
-                return;
-            }
-
-            // Only update border colors for boolean controls
-            if (component.type === "control" && component.data_type === "bool") {
-                card.classList.remove("neutral", "status-on", "status-off");
-
-                if (value === 0) {
-                    card.classList.add("status-on"); // open = green
-                } else if (value === 1) {
-                    card.classList.add("status-off"); // closed = yellow
-                } else {
-                    card.classList.add("neutral"); // fallback
-                }
-            } else if (
-                component.type === "control" &&
-                component.data_type === "float"
-            ) {
-                // Float sensor or float control simulation: random between min and max
-                if (min === undefined || max === undefined) {
-                    return res
-                        .status(400)
-                        .send("Missing min/max values for float simulation");
+            for (const [id, value] of Object.entries(telemetry.Data)) {
+                if (id === undefined || value === null || value === undefined) {
+                    console.warn(`[TELEMETRY] Ignoring invalid telemetry for ID: ${id}`);
+                    continue;
                 }
 
-                simIntervals[id] = setInterval(() => {
-                    const randomValue = parseFloat(
-                        (Math.random() * (max - min) + min).toFixed(2)
-                    );
-                    const packet = {
-                        Source: "Fusion",
-                        "Time Stamp": Math.floor(Date.now() / 1000),
-                        Data: { [id]: randomValue },
-                    };
-                    broadcastPacket("telemetry", packet);
-                }, simulationIntervalMs);
+                latestValues[id] = value;
 
-                console.log(
-                    `[SIMULATE] Started simulating float ${id} between ${min}-${max} every ${simulationIntervalMs}ms.`
-                );
+                if (valueDisplays[id]) {
+                    valueDisplays[id].textContent = `Last Value: ${value}`;
+                }
+
+                const card = document.querySelector(`[data-id="${id}"]`);
+                if (!card) continue;
+
+                const component = components.find((c) => c.id === id);
+                if (!component) {
+                    console.warn(`[TELEMETRY] No component config found for ID: ${id}`);
+                    continue;
+                }
+
+                if (component.type === "control" && component.data_type === "bool") {
+                    card.classList.remove("neutral", "status-on", "status-off");
+                    if (value === 0) {
+                        card.classList.add("status-on");
+                    } else if (value === 1) {
+                        card.classList.add("status-off");
+                    } else {
+                        card.classList.add("neutral");
+                    }
+                }
             }
-            // Otherwise (sensors or non-bool controls), do nothing to border color
-            // Just leave "simulating" class if it exists
         }
     };
 });
