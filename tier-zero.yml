@@ -1,0 +1,83 @@
+name: tier-zero
+
+services:
+  lavinmq0:
+    image: cloudamqp/lavinmq:latest
+    container_name: lavinmq0
+    ports:
+      - "5672:5672"     # AMQP
+      - "5679:5679"     # Internal clustering
+      - "15672:15672"   # LavinMQ Web UI (internal)
+    volumes:
+      - lavinmq0-data:/var/lib/lavinmq/data
+    networks:
+      - app-network
+
+  lavinmq1:
+    image: cloudamqp/lavinmq:latest
+    container_name: lavinmq1
+    ports:
+      - "5673:5672"
+      - "5680:5679"
+      - "15673:15672"
+    volumes:
+      - lavinmq1-data:/var/lib/lavinmq/data
+    networks:
+      - app-network
+
+  lavinmq2:
+    image: cloudamqp/lavinmq:latest
+    container_name: lavinmq2
+    ports:
+      - "5674:5672"
+      - "5681:5679"
+      - "15674:15672"
+    volumes:
+      - lavinmq2-data:/var/lib/lavinmq/data
+    networks:
+      - app-network
+
+  lavinmq0-nginx:
+    image: nginx:alpine
+    container_name: lavinmq0-nginx
+    ports:
+      - "8506:15673"  # External localhost:8506 -> lavinmq0 internal UI
+    volumes:
+      - ./config/lavinmq0-nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - lavinmq0
+    networks:
+      - app-network
+
+  lavinmq1-nginx:
+    image: nginx:alpine
+    container_name: lavinmq1-nginx
+    ports:
+      - "8507:15674"
+    volumes:
+      - ./config/lavinmq1-nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - lavinmq1
+    networks:
+      - app-network
+
+  lavinmq2-nginx:
+    image: nginx:alpine
+    container_name: lavinmq2-nginx
+    ports:
+      - "8508:15675"
+    volumes:
+      - ./config/lavinmq2-nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - lavinmq2
+    networks:
+      - app-network
+
+volumes:
+  lavinmq0-data:
+  lavinmq1-data:
+  lavinmq2-data:
+
+networks:
+  app-network:
+    driver: bridge

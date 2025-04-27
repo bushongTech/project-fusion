@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fusion</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <h1>Fusion</h1>
+
+  <div class="mode-toggle">
+    <label class="switch">
+      <input type="checkbox" id="sim-toggle">
+      <span class="slider"></span>
+    </label>
+    <span id="sim-label">No-Sim</span>
+  </div>
+
+  <div id="interval-adjuster" style="display: none; margin-bottom: 2rem;">
+    <label for="interval-input" style="margin-right: 0.5rem;">Simulation Interval (ms):</label>
+    <input type="number" id="interval-input" min="25" max="10000" value="500" step="25" class="range-input">
+  </div>
+
+  <div id="component-container" class="grid"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>

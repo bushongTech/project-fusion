@@ -1,0 +1,47 @@
+channels:
+  "My Application":
+    channels:
+      "PT-001":
+        type: "sensor"
+        data_type: "float"
+        unit: "psi"
+      "TI-001":
+        type: "sensor"
+        data_type: "float"
+        unit: "f"
+      "PT-002":
+        type: "sensor"
+        data_type: "float"
+        unit: "psi"
+      "TI-002":
+        type: "sensor"
+        data_type: "float"
+        unit: "f"
+      "PV-001":
+        type: "control"
+        data_type: "bool"
+        unit: "binary"
+      "PV-002":
+        type: "control"
+        data_type: "bool"
+        unit: "binary"
+      "EV-001":
+        type: "control"
+        data_type: "bool"
+        unit: "binary"
+      "VFD-001":
+        type: "control"
+        data_type: "float"
+        unit: "mV"
+  "CCB_Weight":
+    channels:
+      "TOT-001":
+        type: "sensor"
+        data_type: "float"
+        unit: "lbs"
+  "Print_Bed_Weight":
+    channels:
+      "TOT-002":
+        type: "sensor"
+        data_type: "float"
+        unit: "lbs"

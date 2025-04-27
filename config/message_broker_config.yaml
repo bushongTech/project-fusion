@@ -1,0 +1,38 @@
+brokers:
+  lavinmq:
+    host: "lavinmq0"
+    port: 5672
+    username: "guest"
+    password: "guest"  # pragma: allowlist secret
+    virtual_host: "/"
+    exchanges:
+      - name: TLM
+        type: "fanout"
+        queues:
+          - name: slinky
+          - name: telemetry-center
+          - name: storage-service
+          - name: fusion
+      - name: CMD_BC
+        type: "fanout"
+        queues:
+          - name: command-center
+          - name: translator-udp
+          - name: storage-service
+          - name: fusion
+      - name: DIR
+        type: "fanout"
+        queues:
+          - name: translator-udp-dir
+      - name: AUTO_DIR
+        type: "fanout"
+        queues:
+          - name: ccb-injection
+      - name: AUTO_TLM
+        type: "fanout"
+        queues:
+          - name: ccb-injection-ui
+      - name: HST
+        type: "fanout"
+        queues:
+          - name: unknown-client
