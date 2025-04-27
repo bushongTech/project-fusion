@@ -138,24 +138,71 @@ app.get("/api/components", (req, res) => {
 });
 
 app.post("/api/simulate", (req, res) => {
-  const { id, min, max } = req.body;
-  if (!componentMap[id]) return res.status(400).send("Invalid component ID");
+  const { id, min, max, value } = req.body;
+  const component = componentMap[id];
+
+  if (!component) return res.status(400).send("Invalid component ID");
 
   if (simIntervals[id]) clearInterval(simIntervals[id]);
 
-  simIntervals[id] = setInterval(() => {
-    const value = parseFloat((Math.random() * (max - min) + min).toFixed(2));
-    const packet = {
-      Source: "Fusion",
-      "Time Stamp": Math.floor(Date.now() / 1000),
-      Data: { [id]: value }
-    };
-    broadcastPacket("telemetry", packet);
-  }, simulationIntervalMs);
+  if (component.data_type === "bool") {
+    // ✅ Bool control simulation: fixed 0 or 1
+    const boolValue = (typeof value === "number") ? value : 0;
 
-  console.log(`[SIMULATE] Started simulating ${id} every ${simulationIntervalMs}ms.`);
+    simIntervals[id] = setInterval(() => {
+      const packet = {
+        Source: "Fusion",
+        "Time Stamp": Math.floor(Date.now() / 1000),
+        Data: { [id]: boolValue }
+      };
+      broadcastPacket("telemetry", packet);
+    }, simulationIntervalMs);
+
+    console.log(`[SIMULATE] Started simulating boolean ${id} as ${boolValue} every ${simulationIntervalMs}ms.`);
+  } 
+  else if (component.data_type === "float") {
+    if (component.type === "sensor") {
+      // ✅ Float sensor: random between min and max
+      if (min === undefined || max === undefined) {
+        return res.status(400).send("Missing min/max values for float sensor simulation");
+      }
+
+      simIntervals[id] = setInterval(() => {
+        const randomValue = parseFloat((Math.random() * (max - min) + min).toFixed(2));
+        const packet = {
+          Source: "Fusion",
+          "Time Stamp": Math.floor(Date.now() / 1000),
+          Data: { [id]: randomValue }
+        };
+        broadcastPacket("telemetry", packet);
+      }, simulationIntervalMs);
+
+      console.log(`[SIMULATE] Started simulating float sensor ${id} between ${min}-${max} every ${simulationIntervalMs}ms.`);
+    }
+    else if (component.type === "control") {
+      // ✅ Float control: fixed set value
+      const floatValue = (typeof value === "number") ? value : 0;
+
+      simIntervals[id] = setInterval(() => {
+        const packet = {
+          Source: "Fusion",
+          "Time Stamp": Math.floor(Date.now() / 1000),
+          Data: { [id]: floatValue }
+        };
+        broadcastPacket("telemetry", packet);
+      }, simulationIntervalMs);
+
+      console.log(`[SIMULATE] Started simulating float control ${id} as ${floatValue} every ${simulationIntervalMs}ms.`);
+    }
+  } 
+  else {
+    console.warn(`[SIMULATE] Unknown data type for ${id}`);
+    return res.status(400).send("Unsupported data type for simulation");
+  }
+
   res.sendStatus(200);
 });
+
 
 app.post("/api/simulate/stop", (req, res) => {
   const { id } = req.body;

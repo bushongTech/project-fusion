@@ -75,6 +75,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 card.appendChild(toggleLabel);
             }
 
+            // --- Sensor Handling (float sensors) ---
             if (component.type === "sensor" && simToggle.checked) {
                 const minInput = document.createElement("input");
                 const maxInput = document.createElement("input");
@@ -111,7 +112,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                 card.appendChild(setBtn);
             }
 
+            // --- Control Handling ---
             if (component.type === "control") {
+                // --- Bool Control ---
                 if (component.data_type === "bool") {
                     const openBtn = document.createElement("button");
                     const closeBtn = document.createElement("button");
@@ -124,7 +127,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                     };
 
                     openBtn.addEventListener("click", () => {
-                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
+                        const endpoint = simToggle.checked
+                            ? "/api/simulate"
+                            : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -138,7 +143,9 @@ document.addEventListener("DOMContentLoaded", async () => {
                     });
 
                     closeBtn.addEventListener("click", () => {
-                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
+                        const endpoint = simToggle.checked
+                            ? "/api/simulate"
+                            : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -155,6 +162,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     card.appendChild(closeBtn);
                 }
 
+                // --- Float Control ---
                 if (component.data_type === "float") {
                     const inputWrapper = document.createElement("div");
                     inputWrapper.style.display = "flex";
@@ -183,14 +191,16 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const value = parseFloat(valueInput.value);
                         if (isNaN(value)) return;
 
-                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
+                        const endpoint = simToggle.checked
+                            ? "/api/simulate"
+                            : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
                         fetch(endpoint, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value }),
+                            body: JSON.stringify({ id: component.id, value }), // ✅ Only sending id and value for float controls
                         }).catch((err) => console.error(err));
                     });
 
@@ -251,12 +261,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         if (message.type === "map") {
             console.log("[EVENT] Map received:", message.payload);
+            return;
         }
 
         if (message.type === "telemetry") {
             const telemetry = message.payload;
             const id = Object.keys(telemetry.Data)[0];
             const value = telemetry.Data[id];
+
+            if (id === undefined || value === null || value === undefined) {
+                console.warn(
+                    `[TELEMETRY] Ignoring invalid telemetry: ${JSON.stringify(telemetry)}`
+                );
+                return;
+            }
 
             latestValues[id] = value;
 
@@ -265,10 +283,54 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
 
             const card = document.querySelector(`[data-id="${id}"]`);
-            if (card) {
-                card.classList.remove("neutral", "status-on", "status-off");
-                card.classList.add(value === 1 ? "status-off" : "status-on");
+            if (!card) return;
+
+            const component = components.find((c) => c.id === id);
+            if (!component) {
+                console.warn(`[TELEMETRY] No component config found for ID: ${id}`);
+                return;
             }
+
+            // Only update border colors for boolean controls
+            if (component.type === "control" && component.data_type === "bool") {
+                card.classList.remove("neutral", "status-on", "status-off");
+
+                if (value === 0) {
+                    card.classList.add("status-on"); // open = green
+                } else if (value === 1) {
+                    card.classList.add("status-off"); // closed = yellow
+                } else {
+                    card.classList.add("neutral"); // fallback
+                }
+            } else if (
+                component.type === "control" &&
+                component.data_type === "float"
+            ) {
+                // Float sensor or float control simulation: random between min and max
+                if (min === undefined || max === undefined) {
+                    return res
+                        .status(400)
+                        .send("Missing min/max values for float simulation");
+                }
+
+                simIntervals[id] = setInterval(() => {
+                    const randomValue = parseFloat(
+                        (Math.random() * (max - min) + min).toFixed(2)
+                    );
+                    const packet = {
+                        Source: "Fusion",
+                        "Time Stamp": Math.floor(Date.now() / 1000),
+                        Data: { [id]: randomValue },
+                    };
+                    broadcastPacket("telemetry", packet);
+                }, simulationIntervalMs);
+
+                console.log(
+                    `[SIMULATE] Started simulating float ${id} between ${min}-${max} every ${simulationIntervalMs}ms.`
+                );
+            }
+            // Otherwise (sensors or non-bool controls), do nothing to border color
+            // Just leave "simulating" class if it exists
         }
     };
 });
