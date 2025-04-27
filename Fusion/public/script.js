@@ -200,7 +200,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         fetch(endpoint, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value }), // ✅ Only sending id and value for float controls
+                            body: JSON.stringify({ id: component.id, value }), 
                         }).catch((err) => console.error(err));
                     });
 
