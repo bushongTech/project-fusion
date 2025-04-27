@@ -1,12 +1,13 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("component-container");
-    const response = await fetch("/api/components");
-    const components = await response.json();
-
     const simToggle = document.getElementById("sim-toggle");
     const simLabel = document.getElementById("sim-label");
-    const intervalAdjuster = document.getElementById("interval-adjuster");
-    const intervalInput = document.getElementById("interval-input");
+    const simIntervalControls = document.getElementById("sim-interval-controls");
+    const simIntervalInput = document.getElementById("sim-interval");
+    const simIntervalValue = document.getElementById("sim-interval-value");
+
+    const response = await fetch("/api/components");
+    const components = await response.json();
 
     const valueDisplays = {};
     const componentToggles = {};
@@ -14,26 +15,39 @@ document.addEventListener("DOMContentLoaded", async () => {
     const latestValues = {};
 
     simLabel.textContent = "No-Sim";
+    simIntervalControls.style.display = "none"; // hidden by default
 
     simToggle.addEventListener("change", () => {
         const enabled = simToggle.checked;
         simLabel.textContent = enabled ? "Sim" : "No-Sim";
-        intervalAdjuster.style.display = enabled ? "block" : "none";
+        simIntervalControls.style.display = enabled ? "block" : "none";
         renderUI();
 
         fetch("/api/toggle-sim", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled }),
-        })
-            .then((res) => {
-                if (!res.ok) {
-                    console.error("Failed to toggle Sim mode on server.");
-                }
-            })
-            .catch((err) => {
-                console.error("Error sending Sim toggle request:", err);
+        }).catch((err) => {
+            console.error("Error sending Sim toggle request:", err);
+        });
+    });
+
+    simIntervalInput.addEventListener("input", () => {
+        const interval = parseInt(simIntervalInput.value, 10);
+        simIntervalValue.textContent = `${interval} ms`;
+    });
+
+    simIntervalInput.addEventListener("change", () => {
+        const interval = parseInt(simIntervalInput.value, 10);
+        if (interval >= 25 && interval <= 10000) {
+            fetch("/api/set-interval", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ interval }),
+            }).catch((err) => {
+                console.error("Error updating simulation interval:", err);
             });
+        }
     });
 
     function renderUI() {
@@ -41,8 +55,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         components.forEach((component) => {
             const card = document.createElement("div");
-            card.className = "component-card";
-            card.classList.add("neutral");
+            card.className = "component-card neutral";
             card.dataset.id = component.id;
 
             const title = document.createElement("div");
@@ -56,10 +69,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             card.appendChild(valueDiv);
             valueDisplays[component.id] = valueDiv;
 
-            if (component.type === "sensor" && simToggle.checked) {
+            if (simToggle.checked) {
                 const toggleLabel = createToggleSwitch(component.id);
                 card.appendChild(toggleLabel);
+            }
 
+            if (component.type === "sensor" && simToggle.checked) {
                 const minInput = document.createElement("input");
                 const maxInput = document.createElement("input");
                 const setBtn = document.createElement("button");
@@ -83,12 +98,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     fetch("/api/simulate", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            id: component.id,
-                            min,
-                            max,
-                            interval: parseInt(intervalInput.value, 10),
-                        }),
+                        body: JSON.stringify({ id: component.id, min, max }),
                     });
 
                     isSimulating[component.id] = true;
@@ -101,26 +111,19 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
 
             if (component.type === "control") {
-                if (simToggle.checked) {
-                    const toggleLabel = createToggleSwitch(component.id);
-                    card.appendChild(toggleLabel);
-                }
-
                 if (component.data_type === "bool") {
                     const openBtn = document.createElement("button");
                     const closeBtn = document.createElement("button");
-                    openBtn.textContent = "Open";
-                    closeBtn.textContent = "Close";
+                    openBtn.textContent = "Open (0)";
+                    closeBtn.textContent = "Close (1)";
 
                     const updateStatusColor = (state) => {
-                        card.classList.remove("neutral", "status-open", "status-closed");
-                        card.classList.add(state === 0 ? "status-open" : "status-closed");
+                        card.classList.remove("neutral", "status-on", "status-off");
+                        card.classList.add(state === 1 ? "status-off" : "status-on"); // 1=closed=yellow, 0=open=green
                     };
 
                     openBtn.addEventListener("click", () => {
-                        const endpoint = simToggle.checked
-                            ? "/api/simulate"
-                            : "/api/no-sim";
+                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -133,9 +136,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     });
 
                     closeBtn.addEventListener("click", () => {
-                        const endpoint = simToggle.checked
-                            ? "/api/simulate"
-                            : "/api/no-sim";
+                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -147,7 +148,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         updateStatusColor(1);
                     });
 
-                    updateStatusColor(0);
+                    
                     card.appendChild(openBtn);
                     card.appendChild(closeBtn);
                 }
@@ -180,9 +181,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         const value = parseFloat(valueInput.value);
                         if (isNaN(value)) return;
 
-                        const endpoint = simToggle.checked
-                            ? "/api/simulate"
-                            : "/api/no-sim";
+                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
@@ -244,8 +243,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const card = document.querySelector(`[data-id="${id}"]`);
         if (card && componentToggles[id]) {
-            card.classList.remove("neutral", "status-open", "status-closed");
-            card.classList.add(value === 0 ? "status-open" : "status-closed");
+            card.classList.remove("neutral", "status-on", "status-off");
+            card.classList.add(value === 1 ? "status-off" : "status-on"); // 1 = closed = yellow, 0 = open = green
         }
     };
 });
