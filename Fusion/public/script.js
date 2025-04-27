@@ -148,7 +148,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         updateStatusColor(1);
                     });
 
-                    
+
                     card.appendChild(openBtn);
                     card.appendChild(closeBtn);
                 }
@@ -234,17 +234,32 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const eventSource = new EventSource("/events");
     eventSource.onmessage = (event) => {
-        const { id, value } = JSON.parse(event.data);
-        latestValues[id] = value;
+        const message = JSON.parse(event.data);
 
-        if (valueDisplays[id]) {
-            valueDisplays[id].textContent = `Last Value: ${value}`;
+        if (message.type === "map") {
+            console.log("Received MAP:", message.payload);
+            components.length = 0; // Clear the current components array
+            components.push(...Object.values(message.payload)); // Load new components
+            renderUI();
         }
 
-        const card = document.querySelector(`[data-id="${id}"]`);
-        if (card && componentToggles[id]) {
-            card.classList.remove("neutral", "status-on", "status-off");
-            card.classList.add(value === 1 ? "status-off" : "status-on"); // 1 = closed = yellow, 0 = open = green
+        if (message.type === "telemetry") {
+            const telemetry = message.payload;
+            const id = Object.keys(telemetry.Data)[0];
+            const value = telemetry.Data[id];
+
+            latestValues[id] = value;
+
+            if (valueDisplays[id]) {
+                valueDisplays[id].textContent = `Last Value: ${value}`;
+            }
+
+            const card = document.querySelector(`[data-id="${id}"]`);
+            if (card && componentToggles[id]) {
+                card.classList.remove("neutral", "status-on", "status-off");
+                card.classList.add(value === 1 ? "status-off" : "status-on"); // 1 = closed = yellow, 0 = open = green
+            }
         }
     };
+
 });

@@ -39,8 +39,8 @@ app.use(express.json());
 
 // Utility Functions -----------------------------------------------------
 //Check Valid JSON
-function isValidJSON(text){
-  try{
+function isValidJSON(text) {
+  try {
     JSON.parse(text);
   } catch {
     console.error('Invalid JSON:', text);
@@ -48,9 +48,38 @@ function isValidJSON(text){
   }
 }
 
+app.get("/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  clients.push(res);
+
+  req.on("close", () => {
+    const index = clients.indexOf(res);
+    if (index !== -1) clients.splice(index, 1);
+  });
+});
+
+let simulationInterval = 500; // Default 500ms
+
+app.post("/api/set-interval", (req, res) => {
+  const { interval } = req.body;
+  if (typeof interval === "number" && interval >= 25 && interval <= 10000) {
+    simulationInterval = interval;
+    console.log(`Simulation interval updated to ${interval} ms`);
+    res.sendStatus(200);
+  } else {
+    res.status(400).json({ error: "Invalid interval value" });
+  }
+});
+
+
+
 // Determine If The Source Is Fusion
-function determineSource(commandData){
-  if(!commandData.Source || (commandData.Source != 'Fusion')){
+function determineSource(commandData) {
+  if (!commandData.Source || (commandData.Source != 'Fusion')) {
     return false;
   } else {
     return true;
@@ -58,25 +87,31 @@ function determineSource(commandData){
 }
 
 // Create the Connection
-async function createConnection(config){
+async function createConnection(config) {
   const conn = await amqplib.connect(config);
-  conn.on("error", function(err){
+  conn.on("error", function (err) {
     console.error("Connection Error:", err.message)
   })
-  conn.on("close", function(){
+  conn.on("close", function () {
     console.error("Connection Closed")
   })
   return conn;
 }
 
 // Component Config & Map Based Code ----------------------------------
-function broadcastMapToTheFrontend(map){
-  //Send the map to the frontend
-  console.log(map);
+function broadcastMapToTheFrontend(map) {
+  const initialPacket = {
+    type: "map",
+    payload: map
+  };
+  clients.forEach((client) =>
+    client.write(`data: ${JSON.stringify(initialPacket)}\n\n`)
+  );
 }
 
+
 // Load config.yaml
-function loadComponentConfig(filePath){
+function loadComponentConfig(filePath) {
   try {
     const fileContents = fs.readFileSync(filePath, "utf8");
     const config = jsyaml.load(fileContents);
@@ -87,7 +122,7 @@ function loadComponentConfig(filePath){
       });
     });
     broadcastMapToTheFrontend(componentMap);
-  
+
   } catch (err) {
     console.error("Failed to load config.yaml:", err);
   }
@@ -96,12 +131,12 @@ function loadComponentConfig(filePath){
 loadComponentConfig(CONFIG_PATH)
 
 // LavinMQ Connection & Broker Based Code-------------------------------------------------------------------------------------
-function readBrokerConfig(filePath){
-  try{
+function readBrokerConfig(filePath) {
+  try {
     const fileContents = fs.readFileSync(filePath, 'utf8');
     const yamlObj = jsyaml.load(fileContents);
     return yamlObj;
-  } catch(error){
+  } catch (error) {
     console.error("Error Reading/Parsing The Broker Config YAML File:", error)
   }
 }
@@ -110,31 +145,31 @@ function readBrokerConfig(filePath){
 const queue = 'fusion';
 
 //Load message_broker_config.yaml
-async function loadLavinMQQuesConfig(filePath){
+async function loadLavinMQQuesConfig(filePath) {
   const config = readBrokerConfig(filePath);
-  if(config){
-    try{
-        let connection = await createConnection(lavinConfig);
-        let channel = await connection.createChannel();
-        if(lavinConfig.brokers.lavinmq.exchanges && config.brokers.lavinmq.exchanges.length > 0){
-          config.brokers.lavinmq.exchanges.forEach((exchange) =>{
-            console.log('Configuring Exchange', exchange.name);
-            channel.assertExchange(exchange.name, 'fanout', {durable: true});
-            if(exchange.queues && exchange.queues.length > 0){
-              exchange.queues.forEach(queue => {
-                console.log('Binding Queue', queue.name);
-                channel.assertQueue(queue.name, {durable: true});
-                channel.bindQueue(queue.name, exchange.name, "");
-              })
-            }
-          })
-        }
+  if (config) {
+    try {
+      let connection = await createConnection(lavinConfig);
+      let channel = await connection.createChannel();
+      if (config.brokers.lavinmq.exchanges && config.brokers.lavinmq.exchanges.length > 0) {
+        config.brokers.lavinmq.exchanges.forEach((exchange) => {
+          console.log('Configuring Exchange', exchange.name);
+          channel.assertExchange(exchange.name, 'fanout', { durable: true });
+          if (exchange.queues && exchange.queues.length > 0) {
+            exchange.queues.forEach(queue => {
+              console.log('Binding Queue', queue.name);
+              channel.assertQueue(queue.name, { durable: true });
+              channel.bindQueue(queue.name, exchange.name, "");
+            })
+          }
+        })
+      }
 
-        setTimeout(()=>{
-          channel.close();
-          connection.close();
-        }, 500)
-    } catch(error){
+      setTimeout(() => {
+        channel.close();
+        connection.close();
+      }, 500)
+    } catch (error) {
       console.error("Error Configuring LavinMQ Exchanges/Queues: ", error);
     }
   }
@@ -144,23 +179,23 @@ loadLavinMQQuesConfig(BROKER_CONFIG_PATH);
 
 
 // Command Based Code-------------------------------------------------------------------------------------------------------------------------
-function broadcastCommand(commandPacket){
+function broadcastCommand(commandPacket) {
   // If the container sim toggle is active and the id is in Object.Keys(commandPacket.Data) then we want to send this TLM
   // If the global sim in not active, or the container sim toggle is not active for the id that is in Object.Keys(commandPacket.Data)
   // then we want to send the commandPacket to CMD_BC
   console.log(commandPacket);
-  
+
 
 }
 
-function onNewCommand(msg){
+function onNewCommand(msg) {
   console.log('Received New Command Message: ', msg.content.toString());
   const messageValue = msg.content.toString();
-  if(isValidJSON(messageValue)){
+  if (isValidJSON(messageValue)) {
     const receivedCommand = JSON.parse(messageValue);
     console.log('Parsed Command: ', receivedCommand);
     const selfSourced = determineSource(receivedCommand);
-    if(selfSourced){
+    if (selfSourced) {
       const commandPacket = {
         Source: 'Fusion',
         "Time Stamp": Math.floor(Date.now() / 1000),
@@ -168,13 +203,13 @@ function onNewCommand(msg){
       }
       broadcastCommand(commandPacket);
     }
-    
+
   }
 }
 
 // Command Logging
-function startLoggingCommands(ch){
-  ch.consume(queue, (msg)=>{
+function startLoggingCommands(ch) {
+  ch.consume(queue, (msg) => {
     onNewCommand(msg);
     ch.ack(msg);
   })
@@ -183,58 +218,64 @@ function startLoggingCommands(ch){
 
 
 // Telemetry Based Code ------------------------------------------------------------------------
-function broadcastTelemetryToFrontEnd(individualTelemetryPacket){
-  clients.forEach((client) => client.write(`data: ${JSON.stringify(individualTelemetryPacket)}\n\n`));
+function broadcastTelemetryToFrontEnd(individualTelemetryPacket) {
+  const telemetryPacket = {
+    type: "telemetry",
+    payload: individualTelemetryPacket
+  };
+  clients.forEach((client) =>
+    client.write(`data: ${JSON.stringify(telemetryPacket)}\n\n`)
+  );
 }
 
+
 // Process The Telemetry We Get From Polling.
-function processTelemetry(msg){
-  console.log('Incomming Telemetry:', msg.content.toString());
+function processTelemetry(msg) {
+  console.log('Incoming Telemetry:', msg.content.toString());
   const messageValue = msg.content.toString();
-  if(isValidJSON(messageValue)){
+  if (isValidJSON(messageValue)) {
     const parsedTelemetry = JSON.parse(messageValue);
 
-    if (parsedTelemetry.Source && parsedTelemetry["Time Stamp"] &&  parsedTelemetry.Data) {
-      let individualTelemetryPacket = {
-        Source: parsedTelemetry.Source,
-        "Time Stamp": parsedTelemetry["Time Stamp"],
-        Data: {}
-      }
+    if (parsedTelemetry.Source && parsedTelemetry["Time Stamp"] && parsedTelemetry.Data) {
       Object.entries(parsedTelemetry.Data).forEach(([id, value]) => {
         if (componentMap[id]) {
-          individualTelemetryPacket.Data = {id: value};
+          const individualTelemetryPacket = {
+            Source: parsedTelemetry.Source,
+            "Time Stamp": parsedTelemetry["Time Stamp"],
+            Data: { [id]: value }
+          };
           broadcastTelemetryToFrontEnd(individualTelemetryPacket);
         } else {
-          console.log('Telemetry Received For ID not found in the config.yaml:',{id, value})
+          console.log('Telemetry Received For ID not found in the config.yaml:', { id, value });
         }
       });
+
     } else {
       console.log('Unexpected Telemetry Packet Shape: ', parsedTelemetry);
     }
   } else {
     console.log('Impropperly Formatted Telemetry Received:', messageValue)
   }
-  
 }
 
 // Start The Producer Exchange
-async function startProducerExchange(){
-  try{
+async function startProducerExchange() {
+  try {
     const conn = await createConnection(lavinConfig);
     let channel = await conn.createChannel();
 
-    await channel.assertExchange('CMD_BC', 'fanout', {durable: true});
-    await channel.assertQueue(queue, {durable: true});
+    await channel.assertExchange('CMD_BC', 'fanout', { durable: true });
+    await channel.assertQueue(queue, { durable: true });
     await channel.bindQueue(queue, 'CMD_BC', '');
     startLoggingCommands(channel)
-  }catch(error){
+  } catch (error) {
     console.error('Error Starting Produces Exchange: ', error.message)
   }
 }
 
 //Start Polling for Telemetry Messages
-function startPollingForMessages(ch){
-  ch.consume(queue, (msg)=>{
+function startPollingForMessages(ch) {
+  ch.consume(queue, (msg) => {
     processTelemetry(msg);
     ch.ack(msg)
   })
@@ -246,7 +287,7 @@ async function startConnection() {
     const conn = await createConnection(lavinConfig);
     console.log('Connected To The AMQP Server');
     let channel = await conn.createChannel();
-    await channel.assertQueue(queue, {durable: true});
+    await channel.assertQueue(queue, { durable: true });
     startPollingForMessages(channel);
   } catch (err) {
     console.error("Failed to connect to LavinMQ:", err);
