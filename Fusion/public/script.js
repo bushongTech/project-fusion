@@ -69,6 +69,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             card.appendChild(valueDiv);
             valueDisplays[component.id] = valueDiv;
 
+            // Only show toggle if Sim mode is active
             if (simToggle.checked) {
                 const toggleLabel = createToggleSwitch(component.id);
                 card.appendChild(toggleLabel);
@@ -89,7 +90,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 setBtn.addEventListener("click", () => {
                     const toggle = componentToggles[component.id];
-                    if (!toggle.checked) return;
+                    if (!toggle || !toggle.checked) return;
 
                     const min = parseFloat(minInput.value);
                     const max = parseFloat(maxInput.value);
@@ -99,7 +100,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ id: component.id, min, max }),
-                    });
+                    }).catch((err) => console.error(err));
 
                     isSimulating[component.id] = true;
                     card.classList.add("simulating");
@@ -119,7 +120,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                     const updateStatusColor = (state) => {
                         card.classList.remove("neutral", "status-on", "status-off");
-                        card.classList.add(state === 1 ? "status-off" : "status-on"); // 1=closed=yellow, 0=open=green
+                        card.classList.add(state === 1 ? "status-off" : "status-on"); // 1 = closed = yellow, 0 = open = green
                     };
 
                     openBtn.addEventListener("click", () => {
@@ -131,7 +132,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ id: component.id, value: 0 }),
-                        });
+                        }).catch((err) => console.error(err));
+
                         updateStatusColor(0);
                     });
 
@@ -144,10 +146,10 @@ document.addEventListener("DOMContentLoaded", async () => {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ id: component.id, value: 1 }),
-                        });
+                        }).catch((err) => console.error(err));
+
                         updateStatusColor(1);
                     });
-
 
                     card.appendChild(openBtn);
                     card.appendChild(closeBtn);
@@ -189,7 +191,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ id: component.id, value }),
-                        });
+                        }).catch((err) => console.error(err));
                     });
 
                     card.appendChild(setBtn);
@@ -227,6 +229,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         toggleLabel.appendChild(labelText);
         toggleLabel.appendChild(switchContainer);
 
+        toggle.addEventListener("change", () => {
+            if (!toggle.checked) {
+                // If unchecked, stop simulation
+                fetch("/api/simulate/stop", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id }),
+                }).catch((err) => console.error(err));
+            }
+        });
+
         return toggleLabel;
     }
 
@@ -237,10 +250,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const message = JSON.parse(event.data);
 
         if (message.type === "map") {
-            console.log("Received MAP:", message.payload);
-            components.length = 0; // Clear the current components array
-            components.push(...Object.values(message.payload)); // Load new components
-            renderUI();
+            console.log("[EVENT] Map received:", message.payload);
         }
 
         if (message.type === "telemetry") {
@@ -255,11 +265,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
 
             const card = document.querySelector(`[data-id="${id}"]`);
-            if (card && componentToggles[id]) {
+            if (card) {
                 card.classList.remove("neutral", "status-on", "status-off");
-                card.classList.add(value === 1 ? "status-off" : "status-on"); // 1 = closed = yellow, 0 = open = green
+                card.classList.add(value === 1 ? "status-off" : "status-on");
             }
         }
     };
-
 });
