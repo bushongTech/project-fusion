@@ -6,8 +6,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     const simIntervalInput = document.getElementById("sim-interval");
     const simIntervalValue = document.getElementById("sim-interval-value");
 
+    // Fetch components
     const response = await fetch("/api/components");
     const components = await response.json();
+
+    // Stop all previous simulations on load
+    await fetch("/api/simulate/stop-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+    }).catch((err) => console.error("Error stopping all simulations on page load:", err));
 
     const valueDisplays = {};
     const componentToggles = {};
@@ -15,22 +22,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     const latestValues = {};
 
     simLabel.textContent = "No-Sim";
-    simIntervalControls.style.display = "none"; // hidden by default
+    simIntervalControls.style.display = "none"; // Hidden by default
 
-    simToggle.addEventListener("change", () => {
+    simToggle.addEventListener("change", async () => {
         const enabled = simToggle.checked;
         simLabel.textContent = enabled ? "Sim" : "No-Sim";
         simIntervalControls.style.display = enabled ? "block" : "none";
         renderUI();
 
-        fetch("/api/toggle-sim", {
+        await fetch("/api/toggle-sim", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ enabled }),
         }).catch((err) => console.error("Error sending Sim toggle request:", err));
 
         if (!enabled) {
-            // Clear all blue glows and reset simulation tracking
+            // Remove glowing classes if Sim OFF
             document.querySelectorAll(".component-card.simulating").forEach((card) => {
                 card.classList.remove("simulating");
             });
@@ -45,10 +52,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         simIntervalValue.textContent = `${interval} ms`;
     });
 
-    simIntervalInput.addEventListener("change", () => {
+    simIntervalInput.addEventListener("change", async () => {
         const interval = parseInt(simIntervalInput.value, 10);
         if (interval >= 25 && interval <= 10000) {
-            fetch("/api/set-interval", {
+            await fetch("/api/set-interval", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ interval }),
@@ -93,7 +100,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 maxInput.className = "range-input";
                 setBtn.textContent = "Set";
 
-                setBtn.addEventListener("click", () => {
+                setBtn.addEventListener("click", async () => {
                     const toggle = componentToggles[component.id];
                     if (!toggle || !toggle.checked) return;
 
@@ -101,10 +108,22 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const max = parseFloat(maxInput.value);
                     if (isNaN(min) || isNaN(max) || min > max) return;
 
-                    fetch("/api/simulate", {
+                    // Always stop old sim first
+                    await fetch("/api/simulate/stop", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: component.id, min, max }),
+                        body: JSON.stringify({ id: component.id }),
+                    }).catch((err) => console.error(err));
+
+                    // Start new sim
+                    await fetch("/api/simulate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            id: component.id,
+                            min: min,
+                            max: max
+                        }),
                     }).catch((err) => console.error(err));
 
                     isSimulating[component.id] = true;
@@ -128,12 +147,12 @@ document.addEventListener("DOMContentLoaded", async () => {
                         card.classList.add(state === 1 ? "status-off" : "status-on");
                     };
 
-                    openBtn.addEventListener("click", () => {
+                    openBtn.addEventListener("click", async () => {
                         const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
-                        fetch(endpoint, {
+                        await fetch(endpoint, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ id: component.id, value: 0 }),
@@ -142,12 +161,12 @@ document.addEventListener("DOMContentLoaded", async () => {
                         updateStatusColor(0);
                     });
 
-                    closeBtn.addEventListener("click", () => {
+                    closeBtn.addEventListener("click", async () => {
                         const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
-                        fetch(endpoint, {
+                        await fetch(endpoint, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ id: component.id, value: 1 }),
@@ -184,18 +203,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const setBtn = document.createElement("button");
                     setBtn.textContent = "Set";
 
-                    setBtn.addEventListener("click", () => {
+                    setBtn.addEventListener("click", async () => {
                         const value = parseFloat(valueInput.value);
                         if (isNaN(value)) return;
 
-                        const endpoint = simToggle.checked ? "/api/simulate" : "/api/no-sim";
                         const toggle = componentToggles[component.id];
                         if (toggle && !toggle.checked) return;
 
-                        fetch(endpoint, {
+                        // Always stop old sim first
+                        await fetch("/api/simulate/stop", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value }),
+                            body: JSON.stringify({ id: component.id }),
+                        }).catch((err) => console.error(err));
+
+                        await fetch("/api/simulate", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                id: component.id,
+                                value: value
+                            }),
                         }).catch((err) => console.error(err));
 
                         isSimulating[component.id] = true;
@@ -237,13 +265,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         toggleLabel.appendChild(labelText);
         toggleLabel.appendChild(switchContainer);
 
-        toggle.addEventListener("change", () => {
+        toggle.addEventListener("change", async () => {
             if (!toggle.checked) {
-                fetch("/api/simulate/stop", {
+                await fetch("/api/simulate/stop", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ id }),
-                }).catch((err) => console.error(err));
+                }).catch((err) => console.error("Error stopping simulation:", err));
 
                 const card = document.querySelector(`[data-id="${id}"]`);
                 if (card) {
@@ -258,7 +286,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     renderUI();
 
-    // --- Corrected EventSource Listener ---
     const eventSource = new EventSource("/events");
     eventSource.onmessage = (event) => {
         const message = JSON.parse(event.data);
@@ -287,10 +314,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                 if (!card) continue;
 
                 const component = components.find((c) => c.id === id);
-                if (!component) {
-                    console.warn(`[TELEMETRY] No component config found for ID: ${id}`);
-                    continue;
-                }
+                if (!component) continue;
 
                 if (component.type === "control" && component.data_type === "bool") {
                     card.classList.remove("neutral", "status-on", "status-off");

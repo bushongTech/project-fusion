@@ -17,7 +17,6 @@ const BROKER_CONFIG_PATH = "/config/message_broker_config.yaml";
 let componentMap = {};
 const clients = [];
 const simIntervals = {}; // { id: intervalObject }
-let simulationIntervalMs = 500; // Default simulation interval
 let globalSimEnabled = false;
 
 const lavinConfig = {
@@ -31,6 +30,9 @@ const lavinConfig = {
   heartbeat: 0,
   vhost: "/",
 };
+
+let publisherConnection;
+let publisherChannel;
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
@@ -54,7 +56,37 @@ async function createConnection(config) {
 
 function broadcastPacket(type, payload) {
   const packet = { type, payload };
+
+  // Send to SSE clients
   clients.forEach((client) => client.write(`data: ${JSON.stringify(packet)}\n\n`));
+
+  // Publish to LavinMQ
+  if (publisherChannel) {
+    let exchangeName;
+
+    if (type === "telemetry") exchangeName = "TLM";
+    else if (type === "command") exchangeName = "CMD_BC";
+    else {
+      console.warn(`[AMQP] Unknown packet type '${type}', not publishing`);
+      return;
+    }
+
+    try {
+      publisherChannel.assertExchange(exchangeName, "fanout", { durable: true });
+      publisherChannel.publish(exchangeName, "", Buffer.from(JSON.stringify(payload)));
+      console.log(`[AMQP] Published packet to exchange '${exchangeName}'`);
+    } catch (err) {
+      console.error("[AMQP] Failed to publish packet:", err);
+    }
+  }
+}
+
+function clearAllSimulations() {
+  Object.keys(simIntervals).forEach((id) => {
+    clearInterval(simIntervals[id]);
+    delete simIntervals[id];
+  });
+  console.log("[INIT] Cleared all existing simulations.");
 }
 
 // --- Load Configs --- //
@@ -146,65 +178,78 @@ app.post("/api/simulate", (req, res) => {
     delete simIntervals[id];
   }
 
-  if (component.data_type === "bool") {
-    const boolValue = (typeof value === "number") ? value : 0;
-    simIntervals[id] = setInterval(() => {
-      const packet = {
-        Source: "Fusion",
-        "Time Stamp": Math.floor(Date.now() / 1000),
-        Data: { [id]: boolValue },
-      };
-      broadcastPacket("telemetry", packet);
-    }, simulationIntervalMs);
-
-    console.log(`[SIMULATE] Started simulating boolean ${id} as ${boolValue}`);
-  } 
-  else if (component.data_type === "float") {
-    if (component.type === "sensor") {
-      if (min === undefined || max === undefined) {
-        return res.status(400).send("Missing min/max for sensor simulation");
-      }
+  setTimeout(() => {
+    if (component.data_type === "bool") {
+      const boolValue = (typeof value === "number") ? value : 0;
       simIntervals[id] = setInterval(() => {
-        const randomValue = parseFloat((Math.random() * (max - min) + min).toFixed(2));
         const packet = {
           Source: "Fusion",
           "Time Stamp": Math.floor(Date.now() / 1000),
-          Data: { [id]: randomValue },
+          Data: { [id]: boolValue },
         };
         broadcastPacket("telemetry", packet);
-      }, simulationIntervalMs);
-
-      console.log(`[SIMULATE] Started simulating float sensor ${id} between ${min}-${max}`);
+      }, 500); // hardcoded
+      console.log(`[SIMULATE] Started simulating boolean ${id} as ${boolValue}`);
     } 
-    else if (component.type === "control") {
-      const floatValue = (typeof value === "number") ? value : 0;
-      simIntervals[id] = setInterval(() => {
-        const packet = {
-          Source: "Fusion",
-          "Time Stamp": Math.floor(Date.now() / 1000),
-          Data: { [id]: floatValue },
-        };
-        broadcastPacket("telemetry", packet);
-      }, simulationIntervalMs);
-
-      console.log(`[SIMULATE] Started simulating float control ${id} as ${floatValue}`);
+    else if (component.data_type === "float") {
+      if (component.type === "sensor") {
+        if (min === undefined || max === undefined) {
+          console.warn(`[SIMULATE] Missing min/max for sensor ${id}`);
+          return;
+        }
+        simIntervals[id] = setInterval(() => {
+          const randomValue = parseFloat((Math.random() * (max - min) + min).toFixed(2));
+          const packet = {
+            Source: "Fusion",
+            "Time Stamp": Math.floor(Date.now() / 1000),
+            Data: { [id]: randomValue },
+          };
+          broadcastPacket("telemetry", packet);
+        }, 500); // hardcoded
+        console.log(`[SIMULATE] Started simulating float sensor ${id} between ${min}-${max}`);
+      } 
+      else if (component.type === "control") {
+        const floatValue = (typeof value === "number") ? value : 0;
+        simIntervals[id] = setInterval(() => {
+          const packet = {
+            Source: "Fusion",
+            "Time Stamp": Math.floor(Date.now() / 1000),
+            Data: { [id]: floatValue },
+          };
+          broadcastPacket("telemetry", packet);
+        }, 500); // hardcoded
+        console.log(`[SIMULATE] Started simulating float control ${id} as ${floatValue}`);
+      }
+    } 
+    else {
+      console.warn(`[SIMULATE] Unknown data type for ${id}`);
     }
-  } 
-  else {
-    console.warn(`[SIMULATE] Unknown data type for ${id}`);
-    return res.status(400).send("Unsupported data type");
-  }
+  }, 10);
 
   res.sendStatus(200);
 });
 
 app.post("/api/simulate/stop", (req, res) => {
   const { id } = req.body;
+
+  if (!id) {
+    console.warn("[SIMULATE-STOP] Missing id in request body");
+    return res.status(400).send("Missing component ID");
+  }
+
   if (simIntervals[id]) {
     clearInterval(simIntervals[id]);
     delete simIntervals[id];
-    console.log(`[SIMULATE] Stopped simulation for ${id}`);
+    console.log(`[SIMULATE-STOP] Stopped simulation for ${id}`);
+  } else {
+    console.log(`[SIMULATE-STOP] No active simulation to stop for ${id}`);
   }
+
+  res.sendStatus(200);
+});
+
+app.post("/api/simulate/stop-all", (req, res) => {
+  clearAllSimulations();
   res.sendStatus(200);
 });
 
@@ -228,11 +273,7 @@ app.post("/api/toggle-sim", (req, res) => {
   console.log(`[TOGGLE-SIM] Global simulation mode is now: ${enabled ? "ENABLED" : "DISABLED"}`);
 
   if (!enabled) {
-    Object.keys(simIntervals).forEach((id) => {
-      clearInterval(simIntervals[id]);
-      delete simIntervals[id];
-      console.log(`[SIMULATE] Stopped simulation for ${id}`);
-    });
+    clearAllSimulations();
   }
 
   res.sendStatus(200);
@@ -258,6 +299,9 @@ async function start() {
   await setupExchangesAndQueues();
   await startConsumers();
   loadComponentConfig();
+  clearAllSimulations(); // <<--- clear intervals on server boot
+  publisherConnection = await createConnection(lavinConfig);
+  publisherChannel = await publisherConnection.createChannel();
 
   app.listen(PORT, () => {
     console.log(`Fusion running at http://localhost:${PORT}`);
