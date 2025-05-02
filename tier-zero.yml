@@ -1,15 +1,78 @@
 name: tier-zero
 
 services:
+  etcd0:
+    image: bitnami/etcd:latest
+    container_name: etcd0
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_NAME=etcd0
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd0:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd0:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=lavin-cluster
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    networks:
+      - app-network
+
+  etcd1:
+    image: bitnami/etcd:latest
+    container_name: etcd1
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_NAME=etcd1
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd1:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd1:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=lavin-cluster
+    ports:
+      - "2381:2379"
+      - "2382:2380"
+    networks:
+      - app-network
+
+  etcd2:
+    image: bitnami/etcd:latest
+    container_name: etcd2
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_NAME=etcd2
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd2:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd2:2380
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_CLUSTER=etcd0=http://etcd0:2380,etcd1=http://etcd1:2380,etcd2=http://etcd2:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=lavin-cluster
+    ports:
+      - "2383:2379"
+      - "2384:2380"
+    networks:
+      - app-network
+
   lavinmq0:
     image: cloudamqp/lavinmq:latest
     container_name: lavinmq0
     ports:
-      - "5672:5672"     # AMQP
-      - "5679:5679"     # Internal clustering
-      - "15672:15672"   # LavinMQ Web UI (internal)
+      - "5672:5672"
+      - "5679:5679"
+      - "15672:15672"
+    environment:
+      - LAVINMQ__ETCD__ENDPOINTS=http://etcd0:2379,http://etcd1:2379,http://etcd2:2379
     volumes:
       - lavinmq0-data:/var/lib/lavinmq/data
+    depends_on:
+      - etcd0
+      - etcd1
+      - etcd2
     networks:
       - app-network
 
@@ -20,8 +83,14 @@ services:
       - "5673:5672"
       - "5680:5679"
       - "15673:15672"
+    environment:
+      - LAVINMQ__ETCD__ENDPOINTS=http://etcd0:2379,http://etcd1:2379,http://etcd2:2379
     volumes:
       - lavinmq1-data:/var/lib/lavinmq/data
+    depends_on:
+      - etcd0
+      - etcd1
+      - etcd2
     networks:
       - app-network
 
@@ -32,8 +101,14 @@ services:
       - "5674:5672"
       - "5681:5679"
       - "15674:15672"
+    environment:
+      - LAVINMQ__ETCD__ENDPOINTS=http://etcd0:2379,http://etcd1:2379,http://etcd2:2379
     volumes:
       - lavinmq2-data:/var/lib/lavinmq/data
+    depends_on:
+      - etcd0
+      - etcd1
+      - etcd2
     networks:
       - app-network
 
@@ -41,7 +116,7 @@ services:
     image: nginx:alpine
     container_name: lavinmq0-nginx
     ports:
-      - "8506:15673"  # External localhost:8506 -> lavinmq0 internal UI
+      - "8506:15672"
     volumes:
       - ./config/lavinmq0-nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
@@ -53,7 +128,7 @@ services:
     image: nginx:alpine
     container_name: lavinmq1-nginx
     ports:
-      - "8507:15674"
+      - "8507:15673"
     volumes:
       - ./config/lavinmq1-nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
@@ -65,7 +140,7 @@ services:
     image: nginx:alpine
     container_name: lavinmq2-nginx
     ports:
-      - "8508:15675"
+      - "8508:15674"
     volumes:
       - ./config/lavinmq2-nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
