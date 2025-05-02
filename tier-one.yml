@@ -1,6 +1,18 @@
-name: tier-one-dev
+name: tier-one
 
 services:
+
+  apollo-mission-control:
+    build: ./Apollo-Mission-Control
+    container_name: apollo-mission-control
+    ports:
+      - "8500:8500"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - tier-zero_app-network
+    restart: unless-stopped
+
   fusion:
     build: ./Fusion
     container_name: fusion
