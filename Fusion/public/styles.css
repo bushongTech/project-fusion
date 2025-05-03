@@ -85,11 +85,6 @@ input:checked + .slider::before {
   border-color: #444;
 }
 
-.component-card.simulating {
-  border-color: #2196f3; /* Blue for sensors simulating */
-  box-shadow: 0 0 8px #2196f3;
-}
-
 .component-card.status-on {
   border-color: #4caf50; /* Green = Open */
   box-shadow: 0 0 8px #4caf50;
