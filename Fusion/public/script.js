@@ -1,12 +1,13 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const container = document.getElementById("component-container");
 
-    // Fetch components
     const response = await fetch("/api/components");
     const components = await response.json();
 
     const valueDisplays = {};
+    const commandDisplays = {};
     const latestValues = {};
+    const pendingCommands = {}; // { id: value }
 
     function renderUI() {
         container.innerHTML = "";
@@ -27,6 +28,15 @@ document.addEventListener("DOMContentLoaded", async () => {
             card.appendChild(valueDiv);
             valueDisplays[component.id] = valueDiv;
 
+            let commandDiv;
+            if (component.type === "control") {
+                commandDiv = document.createElement("div");
+                commandDiv.className = "command-display";
+                commandDiv.textContent = "Last Fusion Command: —";
+                card.appendChild(commandDiv);
+                commandDisplays[component.id] = commandDiv;
+            }
+
             if (component.type === "control") {
                 if (component.data_type === "bool") {
                     const openBtn = document.createElement("button");
@@ -35,19 +45,11 @@ document.addEventListener("DOMContentLoaded", async () => {
                     closeBtn.textContent = "Close (1)";
 
                     openBtn.addEventListener("click", async () => {
-                        await fetch("/api/command", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value: 0 })
-                        });
+                        await sendCommand(component.id, 0);
                     });
 
                     closeBtn.addEventListener("click", async () => {
-                        await fetch("/api/command", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value: 1 })
-                        });
+                        await sendCommand(component.id, 1);
                     });
 
                     card.appendChild(openBtn);
@@ -81,12 +83,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                     setBtn.addEventListener("click", async () => {
                         const value = parseFloat(valueInput.value);
                         if (isNaN(value)) return;
-
-                        await fetch("/api/command", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ id: component.id, value })
-                        });
+                        await sendCommand(component.id, value);
                     });
 
                     card.appendChild(setBtn);
@@ -95,6 +92,33 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             container.appendChild(card);
         });
+    }
+
+    async function sendCommand(id, value) {
+        try {
+            await fetch("/api/command", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id, value }),
+            });
+
+            // 🔶 Mark command as pending
+            pendingCommands[id] = value;
+
+            // 🔶 Highlight yellow
+            const card = document.querySelector(`[data-id="${id}"]`);
+            if (card) {
+                card.classList.remove("status-on", "status-off", "matched");
+                card.classList.add("pending");
+            }
+
+            // Update last fusion command
+            if (commandDisplays[id]) {
+                commandDisplays[id].textContent = `Last Fusion Command: ${value}`;
+            }
+        } catch (err) {
+            console.error("[FUSION] Failed to send command:", err);
+        }
     }
 
     const eventSource = new EventSource("/events");
@@ -117,34 +141,42 @@ document.addEventListener("DOMContentLoaded", async () => {
 
                 latestValues[id] = value;
 
-                // Update displayed value
                 if (valueDisplays[id]) {
                     valueDisplays[id].textContent = `Last Value: ${value}`;
                 }
 
-                // Get card container
                 const card = document.querySelector(`[data-id="${id}"]`);
                 if (!card) continue;
 
-                // Find component definition
                 const component = components.find((c) => c.id === id);
                 if (!component) continue;
 
-                // Apply color class for bool control components only
-                if (component.type === "control" && component.data_type === "bool") {
-                    card.classList.remove("neutral", "status-on", "status-off");
+                if (component.type === "control") {
+                    const pendingValue = pendingCommands[id];
 
-                    if (value === 0) {
-                        card.classList.add("status-on");
-                    } else if (value === 1) {
-                        card.classList.add("status-off");
+                    if (pendingValue !== undefined && value === pendingValue) {
+                        // 🔷 Matched telemetry = command → highlight blue
+                        card.classList.remove("pending");
+                        card.classList.add("matched");
+                        delete pendingCommands[id];
+                    } else if (pendingValue !== undefined) {
+                        // Still waiting → keep yellow
+                        card.classList.remove("matched");
+                        card.classList.add("pending");
                     } else {
-                        card.classList.add("neutral");
+                        // No pending command → neutral status
+                        card.classList.remove("pending", "matched");
                     }
+                }
+
+                if (component.type === "control" && component.data_type === "bool") {
+                    // Still apply on/off coloring
+                    card.classList.remove("status-on", "status-off");
+                    if (value === 0) card.classList.add("status-on");
+                    else if (value === 1) card.classList.add("status-off");
                 }
             }
         }
-
     };
 
     renderUI();

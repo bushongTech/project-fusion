@@ -85,12 +85,12 @@ input:checked + .slider::before {
   border-color: #444;
 }
 
-.component-card.status-on {
+.component-card.matched {
   border-color: #4caf50; /* Green = Open */
   box-shadow: 0 0 8px #4caf50;
 }
 
-.component-card.status-off {
+.component-card.pending {
   border-color: #ffeb3b; /* Yellow = Closed */
   box-shadow: 0 0 8px #ffeb3b;
 }

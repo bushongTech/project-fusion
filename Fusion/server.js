@@ -55,21 +55,15 @@ async function createConnection(config) {
 function broadcastPacket(type, payload) {
   const packet = { type, payload };
 
-  // Send to SSE clients
+  // Always stream to SSE clients
   clients.forEach((client) => client.write(`data: ${JSON.stringify(packet)}\n\n`));
 
-  // Publish to LavinMQ
+  // Only publish commands to LavinMQ
+  if (type !== "command") return;
+
   if (publisherChannel) {
-    let exchangeName;
-
-    if (type === "telemetry") exchangeName = "TLM";
-    else if (type === "command") exchangeName = "CMD_BC";
-    else {
-      console.warn(`[AMQP] Unknown packet type '${type}', not publishing`);
-      return;
-    }
-
     try {
+      const exchangeName = "CMD_BC";
       publisherChannel.assertExchange(exchangeName, "fanout", { durable: true });
       publisherChannel.publish(exchangeName, "", Buffer.from(JSON.stringify(payload)));
       console.log(`[AMQP] Published packet to exchange '${exchangeName}'`);
@@ -135,6 +129,11 @@ async function startConsumers() {
 
     const data = JSON.parse(text);
 
+    
+    if (data.Source === "Fusion") {
+      return channel.ack(msg);
+    }
+
     if (data.Data) {
       Object.entries(data.Data).forEach(([id, value]) => {
         if (componentMap[id] && value !== null && value !== undefined) {
@@ -147,6 +146,7 @@ async function startConsumers() {
             },
           };
 
+          
           clients.forEach((client) => {
             client.write(`data: ${JSON.stringify(packet)}\n\n`);
           });
@@ -159,6 +159,7 @@ async function startConsumers() {
 
   console.log("[LAVIN] Started consumers.");
 }
+
 
 // --- Express API Routes --- //
 app.get("/api/components", (req, res) => {
