@@ -28,6 +28,8 @@ const fetchWithTimeout = async (url, timeoutMs = 2000) => {
 };
 
 
+
+
 // API: Discover microservices with UIs
 app.get('/api/microservices', async (req, res) => {
     try {

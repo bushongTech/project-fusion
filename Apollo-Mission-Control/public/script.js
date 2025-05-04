@@ -3,7 +3,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     const iframe = document.getElementById('iframe');
     const iframeTitle = document.getElementById('iframe-title');
   
-  
+    window.addEventListener("message", (event) => {
+
+      const data = event.data;
+      if (data?.type === "LOGIN_SUCCESS") {
+        const { username, admin_status } = data;
+    
+        console.log("User logged in:", username, "Admin:", admin_status);
+    
+        // Optional: persist in session storage
+        sessionStorage.setItem("user", JSON.stringify({ username, admin_status }));
+      }
+    });
+
     // 2. Load microservices
     try {
       const res = await fetch('/api/microservices');

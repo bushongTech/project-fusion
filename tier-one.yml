@@ -23,6 +23,7 @@ services:
       - ./config/message_broker_config.yaml:/config/message_broker_config.yaml:ro
     networks:
       - tier-zero_app-network
+    restart: unless-stopped
 
 networks:
   tier-zero_app-network:
