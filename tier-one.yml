@@ -25,6 +25,16 @@ services:
       - tier-zero_app-network
     restart: unless-stopped
 
+  slinky:
+    build: ./Slinky
+    container_name: slinky
+    volumes:
+      - ./config/config.yaml:/config/config.yaml:ro
+      - ./config/message_broker_config.yaml:/config/message_broker_config.yaml:ro
+    networks:
+      - tier-zero_app-network
+    restart: unless-stopped
+
 networks:
   tier-zero_app-network:
     external: true
