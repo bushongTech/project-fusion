@@ -174,7 +174,7 @@ app.post("/api/command", (req, res) => {
 
   const packet = {
     Source: "Fusion",
-    "Time Stamp": Math.floor(Date.now() / 1000),
+    "Time Stamp": Date.now(),
     Data: { [id]: value },
   };
 

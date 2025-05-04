@@ -173,6 +173,19 @@ services:
     networks:
       - app-network
 
+  storage-service:
+    build: ./Storage-Service
+    container_name: storage-service
+    ports:
+      - "8502:8502"
+    depends_on:
+      - local-db
+    volumes:
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      - ./config/message_broker_config.yaml:/app/config/message_broker_config.yaml:ro
+    networks:
+      - app-network
+
 volumes:
   local-db-data:
   lavinmq0-data:
