@@ -1,6 +1,18 @@
 name: tier-zero
 
 services:
+  synnax:
+    image: synnaxlabs/synnax:latest
+    restart: unless-stopped
+    ports:
+      - 9095:9095
+    volumes:
+      - synnax-data:/usr/local/synnax/data
+    command: ["-d", "/usr/local/synnax/data", "-i", "-l", "synnax:9095"]
+    hostname: synnax
+    networks:
+      - app-network
+
   etcd0:
     image: bitnami/etcd:latest
     container_name: etcd0
@@ -191,6 +203,7 @@ volumes:
   lavinmq0-data:
   lavinmq1-data:
   lavinmq2-data:
+  synnax-data:
 
 networks:
   app-network:
