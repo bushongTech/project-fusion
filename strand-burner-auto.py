@@ -4,99 +4,21 @@ import yaml
 import json
 import random
 import time
-from nicegui import ui
 
-# Shared UI + simulation state
-shared_state = {
-    'sim_rate_hz': 1,
-    'sensor_ranges': {},
-    'latest_values': {},
-    'ui_refresh_interval': 0.1
-}
+# Shared simulation state
+sim_rate_hz = 1
+sensor_ranges = {}
+latest_values = {}
 
-def setup_ui():
-    with ui.column().classes('gap-4') as root_container:
-
-        ui.label('Strand Burner Simulator').classes('text-2xl font-bold mb-4')
-
-        # --- Simulation Rate Control ---
-        with ui.card().classes('mb-4'):
-            ui.label('Simulation Rate (Hz)')
-            sim_rate_slider = ui.slider(min=1, max=100, value=shared_state['sim_rate_hz'], step=1)
-            sim_rate_slider.on_change(lambda e: shared_state.update({'sim_rate_hz': e.value}))
-            ui.label().bind_text_from(sim_rate_slider, 'value', lambda v: f'{v} Hz')
-
-        # --- UI Refresh Rate Control ---
-        with ui.card().classes('mb-4'):
-            ui.label('UI Refresh Rate (Hz)')
-            refresh_selector = ui.select(
-                options=[('1 Hz', 1.0), ('5 Hz', 0.2), ('10 Hz', 0.1)],
-                value=0.1
-            ).classes('w-32')
-            ui.label().bind_text_from(refresh_selector, 'value', lambda v: f"{1/float(v):.0f} Hz")
-            refresh_selector.on_change(lambda e: shared_state.update({'ui_refresh_interval': float(e.value)}))
-
-        # --- Sensor Range Sliders ---
-        with ui.card().classes('mb-4'):
-            ui.label('Sensor Ranges')
-            range_container = ui.column().classes('gap-2')
-
-            def update_sensor_controls():
-                range_container.clear()
-                for sensor_id, (min_val, max_val) in shared_state['sensor_ranges'].items():
-                    with range_container:
-                        ui.label(sensor_id).classes('text-bold')
-                        ui.number(label='Min', value=min_val,
-                                  on_change=lambda e, sid=sensor_id: update_range(sid, e.value, None))
-                        ui.number(label='Max', value=max_val,
-                                  on_change=lambda e, sid=sensor_id: update_range(sid, None, e.value))
-
-            def update_range(sensor_id, new_min, new_max):
-                cur_min, cur_max = shared_state['sensor_ranges'].get(sensor_id, (1, 100))
-                shared_state['sensor_ranges'][sensor_id] = (
-                    new_min if new_min is not None else cur_min,
-                    new_max if new_max is not None else cur_max
-                )
-
-            update_sensor_controls()
-
-        # --- Live Value Display ---
-        with ui.card().classes('mb-4'):
-            ui.label('Live Telemetry').classes('text-bold')
-
-            ui.label('Sensors').classes('text-sm text-gray-500')
-            with ui.column() as sensor_grid:
-                pass
-
-            ui.label('Controls').classes('text-sm text-gray-500 mt-2')
-            with ui.column() as control_grid:
-                pass
-
-            def update_live_values():
-                sensor_grid.clear()
-                for key in sensors:
-                    value = shared_state['latest_values'].get(key, '—')
-                    sensor_grid.add(ui.label(f"{key}: {value}"))
-
-                control_grid.clear()
-                for key in controls:
-                    value = shared_state['latest_values'].get(key, '—')
-                    control_grid.add(ui.label(f"{key}: {value}"))
-
-            def dynamic_timer():
-                update_live_values()
-                ui.timer(shared_state.get('ui_refresh_interval', 0.1), dynamic_timer, once=True)
-
-            dynamic_timer()
-
-# --- Config File Loading ---
+# Load broker config
 with open('/config/message_broker_config.yaml', 'r') as f:
     broker_config = yaml.safe_load(f)
 
+# Load simulation config
 with open('/config/config.yaml', 'r') as f:
     sim_config = yaml.safe_load(f)
 
-# --- Parse Config into Sensors and Controls ---
+# Parse sensors and controls
 sensors = {}
 controls = {}
 
@@ -104,38 +26,33 @@ for group in sim_config.values():
     for channel_id, info in group.get('channels', {}).items():
         if info['type'] == 'sensor':
             sensors[channel_id] = random.randint(1, 100)
-            shared_state['sensor_ranges'][channel_id] = (1, 100)
+            sensor_ranges[channel_id] = (1, 100)
         elif info['type'] == 'control':
             controls[channel_id] = 0
 
-# --- Get Queue Info from Broker Config ---
+# Broker setup
 lavin = broker_config['brokers']['lavinmq']
 
 tlm_queue = next(q['name'] for ex in lavin['exchanges'] if ex['name'] == 'TLM'
                  for q in ex['queues'] if q['name'] == 'strand-burner-auto-tlm')
-
 cmd_queue = next(q['name'] for ex in lavin['exchanges'] if ex['name'] == 'CMD_BC'
                  for q in ex['queues'] if q['name'] == 'strand-burner-auto-cmd')
 
 def timestamp_ms():
     return int(time.time() * 1000)
 
-# --- Simulates Telemetry and Publishes to TLM ---
+# Simulate and publish telemetry
 async def publish_telemetry(channel):
     exchange = await channel.declare_exchange("TLM", aio_pika.ExchangeType.FANOUT, durable=True)
-
     while True:
-        rate = shared_state.get('sim_rate_hz', 1)
-        interval = 1.0 / max(rate, 1)
-
+        interval = 1.0 / max(sim_rate_hz, 1)
         data = {}
         for sensor_id in sensors:
-            min_val, max_val = shared_state['sensor_ranges'].get(sensor_id, (1, 100))
+            min_val, max_val = sensor_ranges.get(sensor_id, (1, 100))
             sensors[sensor_id] = random.randint(min_val, max_val)
             data[sensor_id] = sensors[sensor_id]
-
         data.update(controls)
-        shared_state['latest_values'] = data.copy()
+        latest_values.update(data)
 
         packet = {
             "Source": "strand-burner-auto-tlm",
@@ -146,7 +63,7 @@ async def publish_telemetry(channel):
         await exchange.publish(aio_pika.Message(body=json.dumps(packet).encode()), routing_key="")
         await asyncio.sleep(interval)
 
-# --- Listens to CMD_BC and Updates Control Values ---
+# Listen to CMD_BC and update controls
 async def consume_commands(channel):
     exchange = await channel.declare_exchange("CMD_BC", aio_pika.ExchangeType.FANOUT, durable=True)
     queue = await channel.declare_queue(cmd_queue, durable=True)
@@ -165,10 +82,8 @@ async def consume_commands(channel):
                 except Exception as e:
                     print(f"CMD_BC error: {e}")
 
-# --- App Startup ---
+# Entry point
 async def main():
-    setup_ui()
-
     connection = await aio_pika.connect_robust(
         host=lavin['host'],
         port=lavin['port'],
@@ -179,9 +94,7 @@ async def main():
 
     async with connection:
         channel = await connection.channel()
-
         await asyncio.gather(
-            ui.run_async(host='0.0.0.0', port=8520),
             publish_telemetry(channel),
             consume_commands(channel)
         )
