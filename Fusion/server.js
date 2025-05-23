@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 8505;
+const PORT = 8521; // ✅ Updated port
 
 const CONFIG_PATH = "/config/config.yaml";
 const BROKER_CONFIG_PATH = "/config/message_broker_config.yaml";
@@ -58,7 +58,7 @@ function broadcastPacket(type, payload) {
   // Always stream to SSE clients
   clients.forEach((client) => client.write(`data: ${JSON.stringify(packet)}\n\n`));
 
-  // Only publish commands to LavinMQ
+  // Only publish command packets to LavinMQ
   if (type !== "command") return;
 
   if (publisherChannel) {
@@ -72,8 +72,6 @@ function broadcastPacket(type, payload) {
     }
   }
 }
-
-
 
 // --- Load Configs --- //
 function loadComponentConfig() {
@@ -129,7 +127,7 @@ async function startConsumers() {
 
     const data = JSON.parse(text);
 
-    
+    // Skip loopback commands sent from Fusion
     if (data.Source === "Fusion") {
       return channel.ack(msg);
     }
@@ -146,7 +144,6 @@ async function startConsumers() {
             },
           };
 
-          
           clients.forEach((client) => {
             client.write(`data: ${JSON.stringify(packet)}\n\n`);
           });
@@ -159,7 +156,6 @@ async function startConsumers() {
 
   console.log("[LAVIN] Started consumers.");
 }
-
 
 // --- Express API Routes --- //
 app.get("/api/components", (req, res) => {
@@ -174,14 +170,13 @@ app.post("/api/command", (req, res) => {
 
   const packet = {
     Source: "Fusion",
-    "Time Stamp": Date.now(),
+    "Time Stamp": Math.floor(Date.now() / 1000),
     Data: { [id]: value },
   };
 
   broadcastPacket("command", packet);
   res.sendStatus(200);
 });
-
 
 // --- SSE Events --- //
 app.get("/events", (req, res) => {
