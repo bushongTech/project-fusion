@@ -85,14 +85,22 @@ input:checked + .slider::before {
   border-color: #444;
 }
 
+.component-card.pending {
+  border-color: #ffeb3b;
+  box-shadow: 0 0 8px #ffeb3b;
+}
+
 .component-card.matched {
-  border-color: #4caf50; /* Green = Open */
+  border-color: #4caf50;
   box-shadow: 0 0 8px #4caf50;
 }
 
-.component-card.pending {
-  border-color: #ffeb3b; /* Yellow = Closed */
-  box-shadow: 0 0 8px #ffeb3b;
+.component-card.status-on {
+  border-color: #00e676;
+}
+
+.component-card.status-off {
+  border-color: #ff1744;
 }
 
 .component-title {
@@ -105,7 +113,13 @@ input:checked + .slider::before {
 .value-display {
   font-size: 0.95rem;
   margin: 0.5rem 0;
-  color: #0f0; /* Default neon green */
+  color: #0f0;
+}
+
+.command-display {
+  font-size: 0.85rem;
+  color: #66cfff;
+  margin-bottom: 0.5rem;
 }
 
 .range-input {
