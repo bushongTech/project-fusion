@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 8521; // ✅ Updated port
+const PORT = 8521; 
 
 const CONFIG_PATH = "/config/config.yaml";
 const BROKER_CONFIG_PATH = "/config/message_broker_config.yaml";
