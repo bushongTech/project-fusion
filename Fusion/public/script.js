@@ -126,10 +126,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       const sliderLabel = document.createElement("span");
       sliderLabel.textContent = `1 Hz`;
 
-      slider.addEventListener("input", () => {
-        sliderLabel.textContent = `${slider.value} Hz`;
-      });
-
       intervalWrapper.appendChild(slider);
       intervalWrapper.appendChild(sliderLabel);
       card.appendChild(intervalWrapper);
@@ -158,6 +154,33 @@ document.addEventListener("DOMContentLoaded", async () => {
             delete simulationIntervals[id];
           }
         }
+      });
+
+      // Debounce interval updates
+      let debounceTimeout;
+      slider.addEventListener("input", () => {
+        sliderLabel.textContent = `${slider.value} Hz`;
+
+        clearTimeout(debounceTimeout);
+        debounceTimeout = setTimeout(() => {
+          const id = component.id;
+          const intervalMs = 1000 / parseFloat(slider.value);
+
+          if (simToggle.checked) {
+            if (simulationIntervals[id]) {
+              clearInterval(simulationIntervals[id]);
+            }
+
+            simulationIntervals[id] = setInterval(() => {
+              const simulatedValue =
+                component.data_type === "bool"
+                  ? Math.round(Math.random())
+                  : parseFloat((Math.random() * 100).toFixed(2));
+
+              sendCommand(id, simulatedValue);
+            }, intervalMs);
+          }
+        }, 250);
       });
 
       container.appendChild(card);
