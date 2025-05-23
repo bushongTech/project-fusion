@@ -102,17 +102,15 @@ document.addEventListener("DOMContentLoaded", async () => {
                 body: JSON.stringify({ id, value }),
             });
 
-            // 🔶 Mark command as pending
+            // Track the pending command and highlight yellow
             pendingCommands[id] = value;
 
-            // 🔶 Highlight yellow
             const card = document.querySelector(`[data-id="${id}"]`);
             if (card) {
-                card.classList.remove("status-on", "status-off", "matched");
+                card.classList.remove("matched");
                 card.classList.add("pending");
             }
 
-            // Update last fusion command
             if (commandDisplays[id]) {
                 commandDisplays[id].textContent = `Last Fusion Command: ${value}`;
             }
@@ -155,22 +153,13 @@ document.addEventListener("DOMContentLoaded", async () => {
                     const pendingValue = pendingCommands[id];
 
                     if (pendingValue !== undefined && value === pendingValue) {
-                        // 🔷 Matched telemetry = command → highlight blue
                         card.classList.remove("pending");
                         card.classList.add("matched");
                         delete pendingCommands[id];
-                    } else if (pendingValue !== undefined) {
-                        // Still waiting → keep yellow
-                        card.classList.remove("matched");
-                        card.classList.add("pending");
-                    } else {
-                        // No pending command → neutral status
-                        card.classList.remove("pending", "matched");
                     }
                 }
 
                 if (component.type === "control" && component.data_type === "bool") {
-                    // Still apply on/off coloring
                     card.classList.remove("status-on", "status-off");
                     if (value === 0) card.classList.add("status-on");
                     else if (value === 1) card.classList.add("status-off");
