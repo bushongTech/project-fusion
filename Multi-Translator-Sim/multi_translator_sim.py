@@ -29,18 +29,12 @@ async def main():
                 async with message.process():
                     try:
                         data = json.loads(message.body.decode())
-
                         payload = data.get("Data")
-                        timestamp = data.get("Time Stamp")
 
                         if not payload or not isinstance(payload, dict):
                             continue
 
-                        # Use original timestamp if provided; otherwise use current time in ms
-                        if timestamp is None:
-                            timestamp = int(time.time() * 1000)
-                        elif timestamp < 1e12:
-                            timestamp = int(timestamp * 1000)  # convert from seconds to ms
+                        timestamp = int(time.time() * 1000)
 
                         echo_packet = {
                             "Source": "multi-translator-sim",
