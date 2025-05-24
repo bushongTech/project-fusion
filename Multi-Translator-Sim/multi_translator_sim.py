@@ -34,7 +34,7 @@ async def main():
                         if not payload or not isinstance(payload, dict):
                             continue
 
-                        timestamp = int(time.time() * 1000)
+                        timestamp = int(time.time_ns())
 
                         echo_packet = {
                             "Source": "multi-translator-sim",
