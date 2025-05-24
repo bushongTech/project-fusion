@@ -1,0 +1,27 @@
+name: tier-sim-test
+
+services:
+  fusion:
+    container_name: fusion
+    build:
+      context: ./fusion
+    ports:
+      - "8521:8521"
+    volumes:
+      - ./config/config.yaml:/config/config.yaml:ro
+      - ./config/message_broker_config.yaml:/config/message_broker_config.yaml:ro
+    networks:
+      - tier-zero_app-network
+
+  multi-translator-sim:
+    container_name: multi-translator-sim
+    build:
+      context: ./multi-translator-sim
+    volumes:
+      - ./config/message_broker_config.yaml:/config/message_broker_config.yaml:ro
+    networks:
+      - tier-zero_app-network
+
+networks:
+  tier-zero_app-network:
+    external: true
