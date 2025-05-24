@@ -18,54 +18,6 @@ const lavinConfig = {
     vhost: lavin.virtual_host,
 };
 
-async function consumeTLM({ exchange, queue }) {
-    const conn = await amqplib.connect(lavinConfig);
-    const ch = await conn.createChannel();
-
-    await ch.assertExchange(exchange, "fanout", { durable: true });
-    await ch.assertQueue(queue, { durable: true });
-    await ch.bindQueue(queue, exchange, "");
-
-    console.log(`Listening to '${exchange}' → '${queue}'`);
-
-    ch.consume(
-        queue,
-        async (msg) => {
-            if (!msg) return;
-
-            try {
-                const payload = JSON.parse(msg.content.toString());
-
-                const source = payload.Source;
-                const timestamp = new Date(payload["Time Stamp"]);
-                const data = payload.Data || {};
-
-                const ids = Object.keys(data);
-                if (!source || !timestamp || ids.length === 0) {
-                    console.log(`[${exchange}] Skipped malformed message:`, payload);
-                    ch.ack(msg);
-                    return;
-                }
-
-                await writeToSynnaxChannels(payload);
-                
-                ch.ack(msg);
-            } catch (err) {
-                console.error(`[${exchange}] Failed to write to Synnax:`, err);
-                ch.ack(msg); 
-            }
-        },
-        { noAck: false }
-    );
-}
-
-await consumeTLM({
-    exchange: "TLM",
-    queue: "slinky-tlm"
-});
-
-// I need to set up for producing to CMD_BC using the commandPacket
-
 const timeChannelMap = {};
 const sensorChannelMap = {};
 const controlChannelMap = {};
@@ -101,10 +53,6 @@ function mapChannelIDsFromYAML(yamlPath) {
 async function createChannels() {
     const channelMap = mapChannelIDsFromYAML(configPath);
     for (const [channel, type] of Object.entries(channelMap)) {
-        
-
-        
-
         if (type === 'sensor') {
             try {
                 const sensorTimeIndexChannel = await client.channels.create({
@@ -122,14 +70,14 @@ async function createChannels() {
                 sensorChannelMap[channel] = sensorChannel.key;
 
                 writersMap[channel] = await client.openWriter({
-                    start: Math.floor(Date.now()),
+                    start: TimeStamp.now(),
                     channels: [sensorTimeIndexChannel, sensorChannel.key],
                     authorities: [255, 255],
                     enableAutoCommit: true
                 });
 
             } catch (err) {
-                console.error('Slinky - Create Channels - Sensor - error:', err.message)
+                console.error('Slinky - Create Channels - Sensor - error:', err.message);
             }
         } else if (type === 'control') {
             try {
@@ -154,111 +102,137 @@ async function createChannels() {
                 }, { retrieveIfNameExists: true });
                 feedbackChannelMap[`${channel}-F`] = feedbackChannel.key;
 
-
-
                 writersMap[channel] = await client.openWriter({
-                    start: Math.floor(Date.now()),
+                    start: TimeStamp.now(),
                     channels: [controlTimeIndexChannel, controlChannel.key, feedbackChannel.key],
                     authorities: [255, 255, 0],
                     enableAutoCommit: true
                 });
 
             } catch (err) {
-                console.error('Slinky - Create Channels - Control - error:', err.message)
+                console.error('Slinky - Create Channels - Control - error:', err.message);
             }
         }
-
     }
 }
 
-let amqpConn;
-let amqpChannel;
-
-async function setupProducer() {
-    amqpConn = await amqplib.connect(lavinConfig);
-    amqpChannel = await amqpConn.createChannel();
-
-    await amqpChannel.assertExchange("CMD_BC", "fanout", { durable: true });
-
-    console.log("LavinMQ command producer ready.");
-}
-
-
-async function startStreamer() {
-    const feedbackKeys = Object.keys(feedbackChannelMap);
-    const readFrom = [...feedbackKeys];
-
-    const streamer = await client.openStreamer(readFrom);
-    console.log('Streamer Open');
-    try {
-        for await (const frame of streamer) {
-            const currentFrame = frame.at(-1);
-            console.log(currentFrame);
-            const [feedbackCommandKey] = Object.keys(currentFrame);
-            const changeKeyRequested = feedbackCommandKey.endsWith('-F') ? feedbackCommandKey.slice(0, -2) : feedbackCommandKey;
-            const valueUpdatedCommand = { [changeKeyRequested]: currentFrame[feedbackCommandKey] };
-            const commandPacket = {
-                Source: "Synnax Console",
-                "Time Stamp": Date.now(),
-                Data: valueUpdatedCommand
-            };
-            await amqpChannel.publish(
-                "CMD_BC",
-                "",
-                Buffer.from(JSON.stringify(commandPacket))
-            );
-            console.log("Published command packet:", commandPacket);
-        }
-    } finally {
-        streamer.close();
-        console.log('Streamer Closed')
-    }
-}
-
-
-async function writeToSynnaxChannels(recievedData){
-
+async function writeToSynnaxChannels(recievedData) {
     const tlmData = recievedData.Data;
-    //const timestamp = new TimeStamp(recievedData["Time Stamp"]);
-    const timestamp = Math.floor(Date.now());
-    //const timestamp = recievedData["Time Stamp"];
-    for(const [channel, value] of Object.entries(tlmData)){
+    const timestamp = new TimeStamp(recievedData["Time Stamp"]);
+
+    for (const [channel, value] of Object.entries(tlmData)) {
         const isSensorTLM = channel in sensorChannelMap;
         const isControlTLM = channel in controlChannelMap;
-        try{
-            if(isSensorTLM){
-                if(value !== null){
-                    await writersMap[channel].write({
-                        [timeChannelMap[`${channel}-T`]]: timestamp,
-                        [sensorChannelMap[channel]]: value
-                    });
 
-                } else{
-                    console.log('null value for:', channel);
-                }
-            } else if(isControlTLM){
-                if(value !== null){
-                    await writersMap[channel].write({
-                        [timeChannelMap[`${channel}-T`]]: timestamp,
-                        [controlChannelMap[channel]]: value
-                    });
-                    
-                } else{
-                    console.log('null value for:', channel);
-                }
+        try {
+            if (isSensorTLM && value !== null) {
+                await writersMap[channel].write({
+                    [timeChannelMap[`${channel}-T`]]: timestamp,
+                    [sensorChannelMap[channel]]: value
+                });
+            } else if (isControlTLM && value !== null) {
+                await writersMap[channel].write({
+                    [timeChannelMap[`${channel}-T`]]: timestamp,
+                    [controlChannelMap[channel]]: value
+                });
+            } else if (value === null) {
+                console.log('null value for:', channel);
             } else {
                 console.log(channel, '- Sending Telemetry is not Defined in config/config.yaml');
             }
-        } catch(err) {
+        } catch (err) {
             console.error('Error Writing to Synnax Channels:', err.message);
         }
     }
 }
 
-await createChannels();
-await setupProducer();         
-await startStreamer();
+async function setupProducer() {
+    const conn = await amqplib.connect(lavinConfig);
+    const ch = await conn.createChannel();
+    await ch.assertExchange("CMD_BC", "fanout", { durable: true });
+    amqpConn = conn;
+    amqpChannel = ch;
+    console.log("LavinMQ command producer ready.");
+}
 
+async function startStreamer() {
+    const feedbackKeys = Object.keys(feedbackChannelMap);
+    const streamer = await client.openStreamer(feedbackKeys);
+    console.log('Streamer Open');
+
+    try {
+        for await (const frame of streamer) {
+            const currentFrame = frame.at(-1);
+
+            for (const [feedbackKey, value] of Object.entries(currentFrame)) {
+                if (!feedbackKey.endsWith("-F")) continue;
+
+                const controlID = feedbackKey.slice(0, -2);
+                const commandPacket = {
+                    Source: "Synnax Console",
+                    "Time Stamp": TimeStamp.now().value,
+                    Data: { [controlID]: value }
+                };
+
+                await amqpChannel.publish(
+                    "CMD_BC",
+                    "",
+                    Buffer.from(JSON.stringify(commandPacket))
+                );
+                console.log("Published command packet:", commandPacket);
+            }
+        }
+    } finally {
+        streamer.close();
+        console.log('Streamer Closed');
+    }
+}
+
+async function consumeTLM({ exchange, queue }) {
+    const conn = await amqplib.connect(lavinConfig);
+    const ch = await conn.createChannel();
+
+    await ch.assertExchange(exchange, "fanout", { durable: true });
+    await ch.assertQueue(queue, { durable: true });
+    await ch.bindQueue(queue, exchange, "");
+
+    console.log(`Listening to '${exchange}' → '${queue}'`);
+
+    ch.consume(
+        queue,
+        async (msg) => {
+            if (!msg) return;
+
+            try {
+                const payload = JSON.parse(msg.content.toString());
+                const source = payload.Source;
+                const timestamp = new Date(payload["Time Stamp"]);
+                const data = payload.Data || {};
+
+                if (!source || !timestamp || Object.keys(data).length === 0) {
+                    console.log(`[${exchange}] Skipped malformed message:`, payload);
+                    ch.ack(msg);
+                    return;
+                }
+
+                await writeToSynnaxChannels(payload);
+                ch.ack(msg);
+            } catch (err) {
+                console.error(`[${exchange}] Failed to write to Synnax:`, err);
+                ch.ack(msg);
+            }
+        },
+        { noAck: false }
+    );
+}
+
+let amqpConn;
+let amqpChannel;
+
+await createChannels();
+await setupProducer();
+await consumeTLM({ exchange: "TLM", queue: "slinky-tlm" });
+await startStreamer();
 
 async function gracefulShutdown() {
     console.log('Starting graceful shutdown...');
