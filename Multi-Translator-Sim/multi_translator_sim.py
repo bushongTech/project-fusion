@@ -16,11 +16,22 @@ async def main():
     async with connection:
         channel = await connection.channel()
 
-        cmd_exchange = await channel.declare_exchange(CMD_EXCHANGE, aio_pika.ExchangeType.FANOUT)
+        # Use passive=True to avoid redeclaration errors if CMD_BC already exists
+        cmd_exchange = await channel.declare_exchange(
+            CMD_EXCHANGE,
+            aio_pika.ExchangeType.FANOUT,
+            durable=True,
+            passive=True
+        )
+
         queue = await channel.declare_queue(QUEUE_NAME, durable=True)
         await queue.bind(cmd_exchange)
 
-        tlm_exchange = await channel.declare_exchange(TLM_EXCHANGE, aio_pika.ExchangeType.FANOUT)
+        tlm_exchange = await channel.declare_exchange(
+            TLM_EXCHANGE,
+            aio_pika.ExchangeType.FANOUT,
+            durable=True
+        )
 
         print(f"[multi-translator-sim] Listening on queue '{QUEUE_NAME}'...")
 
@@ -34,7 +45,7 @@ async def main():
                         if not payload or not isinstance(payload, dict):
                             continue
 
-                        timestamp = int(time.time_ns())
+                        timestamp = time.time_ns()
 
                         echo_packet = {
                             "Source": "multi-translator-sim",

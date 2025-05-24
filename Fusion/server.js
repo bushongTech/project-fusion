@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 8521; 
+const PORT = 8521;
 
 const CONFIG_PATH = "/config/config.yaml";
 const BROKER_CONFIG_PATH = "/config/message_broker_config.yaml";
@@ -164,17 +164,50 @@ app.get("/api/components", (req, res) => {
 
 app.post("/api/command", (req, res) => {
   const { id, value } = req.body;
-  if (!componentMap[id] || componentMap[id].type !== "control") {
-    return res.status(400).send("Invalid or non-control component ID");
+  console.log("[SERVER] /api/command received:", { id, value });
+
+  if (!componentMap[id]) {
+    console.warn("[SERVER] Unknown ID:", id);
+    return res.status(400).send("Invalid component ID");
+  }
+
+  if (componentMap[id].type !== "control") {
+    console.warn("[SERVER] ID is not a control:", id);
+    return res.status(400).send("Component is not a control");
   }
 
   const packet = {
     Source: "Fusion",
-    "Time Stamp": Math.floor(Date.now() / 1000),
+    "Time Stamp": Date.now(),
     Data: { [id]: value },
   };
 
   broadcastPacket("command", packet);
+  res.sendStatus(200);
+});
+
+app.post("/api/simulate", (req, res) => {
+  const { id, value } = req.body;
+  console.log("[SERVER] /api/simulate received:", { id, value });
+
+  if (!componentMap[id]) {
+    console.warn("[SERVER] Unknown ID:", id);
+    return res.status(400).send("Invalid component ID");
+  }
+
+  const type = componentMap[id].type;
+  if (type !== "sensor" && type !== "control") {
+    console.warn("[SERVER] ID is not a sensor or control:", id);
+    return res.status(400).send("Component is not a sensor or control");
+  }
+
+  const packet = {
+    Source: "Fusion",
+    "Time Stamp": Date.now(),
+    Data: { [id]: value },
+  };
+
+  broadcastPacket("telemetry", packet); // Only publish to TLM
   res.sendStatus(200);
 });
 

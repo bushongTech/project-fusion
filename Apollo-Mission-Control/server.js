@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom';
 import { fileURLToPath } from 'url';
 
 const app = express();
-const PORT = 8500;
+const PORT = 8503;
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,13 +38,13 @@ app.get('/api/microservices', async (req, res) => {
 
         for (const container of containers) {
             const name = container.Names[0].replace(/^\//, '');
-            if (name == 'apollo-mission-control') continue;
-            if (name == 'lavinmq0') continue;
-            if (name == 'lavinmq1') continue;
-            if (name == 'lavinmq2') continue;
-
+            
             const portInfo = container.Ports.find(p => p.Type === 'tcp' && p.PublicPort);
             if (!portInfo) continue;
+            if(portInfo.PublicPort == PORT) continue;
+            if([15672, 15673, 15674].includes(portInfo.PublicPort)) continue;
+            if([5432, 5332, 5672, 5679, 2379, 2380 ].includes(portInfo.PrivatePort)) continue;
+
 
             const url = `http://${name}:${portInfo.PrivatePort}`;
             console.log(`Trying ${name} at ${url}`);

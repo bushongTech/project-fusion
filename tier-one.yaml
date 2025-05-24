@@ -6,21 +6,9 @@ services:
     build: ./Apollo-Mission-Control
     container_name: apollo-mission-control
     ports:
-      - "8500:8500"
+      - "8503:8503"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - tier-zero_app-network
-    restart: unless-stopped
-
-  fusion:
-    build: ./Fusion
-    container_name: fusion
-    ports:
-      - "8505:8505"
-    volumes:
-      - ./config/config.yaml:/config/config.yaml:ro
-      - ./config/message_broker_config.yaml:/config/message_broker_config.yaml:ro
     networks:
       - tier-zero_app-network
     restart: unless-stopped

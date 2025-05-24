@@ -12,7 +12,9 @@ services:
       - ./config/message_broker_config.yaml:/config/message_broker_config.yaml:ro
     networks:
       - tier-zero_app-network
-
+    depends_on: 
+      - multi-translator-sim
+      
   multi-translator-sim:
     container_name: multi-translator-sim
     build:

@@ -29,6 +29,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       card.appendChild(valueDiv);
       valueDisplays[component.id] = valueDiv;
 
+      let simToggle; // Declare here for use in event handlers
+
       if (component.type === "control") {
         const commandDiv = document.createElement("div");
         commandDiv.className = "command-display";
@@ -36,13 +38,37 @@ document.addEventListener("DOMContentLoaded", async () => {
         card.appendChild(commandDiv);
         commandDisplays[component.id] = commandDiv;
 
+        // Simulate toggle
+        const simWrapper = document.createElement("div");
+        simWrapper.className = "simulate-wrapper";
+        simToggle = document.createElement("input");
+        simToggle.type = "checkbox";
+        simToggle.id = `sim-toggle-${component.id}`;
+        const simLabel = document.createElement("label");
+        simLabel.textContent = "Simulate";
+        simLabel.htmlFor = simToggle.id;
+        simWrapper.append(simToggle, simLabel);
+        card.appendChild(simWrapper);
+
         if (component.data_type === "bool") {
           const openBtn = document.createElement("button");
           openBtn.textContent = "Open (0)";
-          openBtn.onclick = () => sendCommand(component.id, 0);
+          openBtn.onclick = () => {
+            const value = 0;
+            simToggle.checked
+              ? simulateSensor(component.id, value)
+              : sendCommand(component.id, value);
+          };
+
           const closeBtn = document.createElement("button");
           closeBtn.textContent = "Close (1)";
-          closeBtn.onclick = () => sendCommand(component.id, 1);
+          closeBtn.onclick = () => {
+            const value = 1;
+            simToggle.checked
+              ? simulateSensor(component.id, value)
+              : sendCommand(component.id, value);
+          };
+
           card.append(openBtn, closeBtn);
         }
 
@@ -50,12 +76,17 @@ document.addEventListener("DOMContentLoaded", async () => {
           const input = document.createElement("input");
           input.type = "number";
           input.className = "range-input";
+
           const setBtn = document.createElement("button");
           setBtn.textContent = "Set";
           setBtn.onclick = () => {
             const val = parseFloat(input.value);
-            if (!isNaN(val)) sendCommand(component.id, val);
+            if (isNaN(val)) return;
+            simToggle.checked
+              ? simulateSensor(component.id, val)
+              : sendCommand(component.id, val);
           };
+
           card.append(input, setBtn);
         }
       }
@@ -137,7 +168,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           simulationIntervals[id] = setInterval(() => {
             const simulatedValue = parseFloat((Math.random() * (max - min) + min).toFixed(2));
-            sendCommand(id, simulatedValue);
+            simulateSensor(id, simulatedValue);
           }, intervalMs);
         });
       }
@@ -147,25 +178,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function sendCommand(id, value) {
+    console.log("[FUSION] Attempting to send command:", { id, value });
+
     try {
-      await fetch("/api/command", {
+      const res = await fetch("/api/command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, value }),
       });
 
-      pendingCommands[id] = value;
-      const card = document.querySelector(`[data-id="${id}"]`);
-      if (card) {
-        card.classList.remove("matched");
-        card.classList.add("pending");
-      }
-
-      if (commandDisplays[id]) {
-        commandDisplays[id].textContent = `Last Fusion Command: ${value}`;
-      }
+      const resultText = await res.text();
+      console.log("[FUSION] Response:", res.status, resultText);
     } catch (err) {
       console.error("[FUSION] Failed to send command:", err);
+    }
+  }
+
+  async function simulateSensor(id, value) {
+    console.log("[FUSION] Simulating:", { id, value });
+
+    try {
+      const res = await fetch("/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, value }),
+      });
+
+      const resultText = await res.text();
+      console.log("[FUSION] Simulate Response:", res.status, resultText);
+    } catch (err) {
+      console.error("[FUSION] Failed to simulate:", err);
     }
   }
 
