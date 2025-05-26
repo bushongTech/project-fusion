@@ -8,16 +8,14 @@ const brokerConfigPath = "/config/message_broker_config.yaml";
 const rawBrokerYaml = fs.readFileSync(brokerConfigPath, "utf8");
 const parsedBroker = yaml.load(rawBrokerYaml);
 const lavin = parsedBroker.brokers.lavinmq;
-let amqpConn;
-let amqpChannel;
 
 const lavinConfig = {
-    protocol: "amqp",
-    hostname: lavin.host,
-    port: lavin.port,
-    username: lavin.username,
-    password: lavin.password,
-    vhost: lavin.virtual_host,
+  protocol: "amqp",
+  hostname: lavin.host,
+  port: lavin.port,
+  username: lavin.username,
+  password: lavin.password,
+  vhost: lavin.virtual_host,
 };
 
 const timeChannelMap = {};
@@ -27,231 +25,234 @@ const writersMap = {};
 const feedbackChannelMap = {};
 
 const client = new Synnax({
-    host: "synnax",
-    port: 9095,
-    username: "synnax",
-    password: "seldon",
-    secure: false,
+  host: "synnax",
+  port: 9095,
+  username: "synnax",
+  password: "seldon",
+  secure: false,
 });
 
+let hasWritten = false;
+let streamerStarted = false;
+
 function mapChannelIDsFromYAML(yamlPath) {
-    const raw = fs.readFileSync(yamlPath, "utf8");
-    const parsed = yaml.load(raw);
-    const map = {};
+  const raw = fs.readFileSync(yamlPath, "utf8");
+  const parsed = yaml.load(raw);
+  const map = {};
 
-    if (parsed.channels) {
-        for (const group of Object.values(parsed.channels)) {
-            if (group.channels) {
-                for (const [id, channel] of Object.entries(group.channels)) {
-                    map[id] = channel.type;
-                }
-            }
+  if (parsed.channels) {
+    for (const group of Object.values(parsed.channels)) {
+      if (group.channels) {
+        for (const [id, channel] of Object.entries(group.channels)) {
+          map[id] = channel.type;
         }
+      }
     }
+  }
 
-    return map;
+  return map;
 }
 
 async function createChannels() {
-    const channelMap = mapChannelIDsFromYAML(configPath);
-    for (const [channel, type] of Object.entries(channelMap)) {
-        if (type === 'sensor') {
-            try {
-                const sensorTimeIndexChannel = await client.channels.create({
-                    name: `${channel}-T`,
-                    dataType: 'timestamp',
-                    isIndex: true
-                }, { retrieveIfNameExists: true });
-                timeChannelMap[`${channel}-T`] = sensorTimeIndexChannel.key;
+  const channelMap = mapChannelIDsFromYAML(configPath);
 
-                const sensorChannel = await client.channels.create({
-                    name: channel,
-                    dataType: DataType.FLOAT32,
-                    index: sensorTimeIndexChannel.key
-                }, { retrieveIfNameExists: true });
-                sensorChannelMap[channel] = sensorChannel.key;
+  for (const [channel, type] of Object.entries(channelMap)) {
+    try {
+      const start = TimeStamp.now();
 
-                writersMap[channel] = await client.openWriter({
-                    start: TimeStamp.now(),
-                    channels: [sensorTimeIndexChannel, sensorChannel.key],
-                    authorities: [255, 255],
-                    enableAutoCommit: true
-                });
+      if (type === "sensor") {
+        const timeIndex = await client.channels.create({
+          name: `${channel}-T`,
+          dataType: "timestamp",
+          isIndex: true,
+        }, { retrieveIfNameExists: true });
 
-            } catch (err) {
-                console.error('Slinky - Create Channels - Sensor - error:', err.message);
-            }
-        } else if (type === 'control') {
-            try {
-                const controlTimeIndexChannel = await client.channels.create({
-                    name: `${channel}-T`,
-                    dataType: 'timestamp',
-                    isIndex: true
-                }, { retrieveIfNameExists: true });
-                timeChannelMap[`${channel}-T`] = controlTimeIndexChannel.key;
+        const sensor = await client.channels.create({
+          name: channel,
+          dataType: DataType.FLOAT32,
+          index: timeIndex.key,
+        }, { retrieveIfNameExists: true });
 
-                const controlChannel = await client.channels.create({
-                    name: channel,
-                    dataType: DataType.FLOAT32,
-                    index: controlTimeIndexChannel.key
-                }, { retrieveIfNameExists: true });
-                controlChannelMap[channel] = controlChannel.key;
-
-                const feedbackChannel = await client.channels.create({
-                    name: `${channel}-F`,
-                    dataType: DataType.FLOAT32,
-                    virtual: true
-                }, { retrieveIfNameExists: true });
-                feedbackChannelMap[`${channel}-F`] = feedbackChannel.key;
-
-                writersMap[channel] = await client.openWriter({
-                    start: TimeStamp.now(),
-                    channels: [controlTimeIndexChannel, controlChannel.key, feedbackChannel.key],
-                    authorities: [255, 255, 0],
-                    enableAutoCommit: true
-                });
-
-            } catch (err) {
-                console.error('Slinky - Create Channels - Control - error:', err.message);
-            }
+        if (!timeIndex.key || !sensor.key) {
+          console.error(`Missing keys for sensor ${channel}`);
+          continue;
         }
+
+        timeChannelMap[`${channel}-T`] = timeIndex.key;
+        sensorChannelMap[channel] = sensor.key;
+
+        writersMap[channel] = await client.openWriter({
+          start,
+          channels: [timeIndex.key, sensor.key],
+          authorities: [255, 255],
+          enableAutoCommit: true,
+        });
+      }
+
+      if (type === "control") {
+        const timeIndex = await client.channels.create({
+          name: `${channel}-T`,
+          dataType: "timestamp",
+          isIndex: true,
+        }, { retrieveIfNameExists: true });
+
+        const control = await client.channels.create({
+          name: channel,
+          dataType: DataType.FLOAT32,
+          index: timeIndex.key,
+        }, { retrieveIfNameExists: true });
+
+        const feedback = await client.channels.create({
+          name: `${channel}-F`,
+          dataType: DataType.FLOAT32,
+          virtual: true,
+        }, { retrieveIfNameExists: true });
+
+        if (!timeIndex.key || !control.key || !feedback.key) {
+          console.error(`Missing keys for control ${channel}`);
+          continue;
+        }
+
+        timeChannelMap[`${channel}-T`] = timeIndex.key;
+        controlChannelMap[channel] = control.key;
+        feedbackChannelMap[`${channel}-F`] = feedback.key;
+
+        writersMap[channel] = await client.openWriter({
+          start,
+          channels: [timeIndex.key, control.key, feedback.key],
+          authorities: [255, 255, 0],
+          enableAutoCommit: true,
+        });
+      }
+    } catch (err) {
+      console.error(`Error creating channels for ${channel}:`, err.message);
     }
+  }
 }
 
-async function writeToSynnaxChannels(recievedData) {
-    const tlmData = recievedData.Data;
-    const timestamp = new TimeStamp(recievedData["Time Stamp"]);
+async function writeToSynnaxChannels(receivedData) {
+  const tlmData = receivedData.Data;
+  const timestamp = new TimeStamp(receivedData["Time Stamp"]);
 
-    for (const [channel, value] of Object.entries(tlmData)) {
-        const isSensorTLM = channel in sensorChannelMap;
-        const isControlTLM = channel in controlChannelMap;
+  for (const [channel, value] of Object.entries(tlmData)) {
+    try {
+      if (channel in sensorChannelMap && value !== null) {
+        await writersMap[channel].write({
+          [timeChannelMap[`${channel}-T`]]: timestamp,
+          [sensorChannelMap[channel]]: value,
+        });
+        hasWritten = true;
+      } else if (channel in controlChannelMap && value !== null) {
+        await writersMap[channel].write({
+          [timeChannelMap[`${channel}-T`]]: timestamp,
+          [controlChannelMap[channel]]: value,
+        });
+        hasWritten = true;
+      }
 
-        try {
-            if (isSensorTLM && value !== null) {
-                await writersMap[channel].write({
-                    [timeChannelMap[`${channel}-T`]]: timestamp,
-                    [sensorChannelMap[channel]]: value
-                });
-            } else if (isControlTLM && value !== null) {
-                await writersMap[channel].write({
-                    [timeChannelMap[`${channel}-T`]]: timestamp,
-                    [controlChannelMap[channel]]: value
-                });
-            } else if (value === null) {
-                console.log('null value for:', channel);
-            } else {
-                console.log(channel, '- Sending Telemetry is not Defined in config/config.yaml');
-            }
-        } catch (err) {
-            console.error('Error Writing to Synnax Channels:', err.message);
-        }
+      if (hasWritten && !streamerStarted) {
+        streamerStarted = true;
+        startStreamer().catch(err =>
+          console.error("Streamer failed to start:", err.message)
+        );
+      }
+    } catch (err) {
+      console.error(`Error writing TLM for ${channel}:`, err.message);
     }
-}
-
-async function setupProducer() {
-    const conn = await amqplib.connect(lavinConfig);
-    const ch = await conn.createChannel();
-    await ch.assertExchange("CMD_BC", "fanout", { durable: true });
-    amqpConn = conn;
-    amqpChannel = ch;
-    console.log("LavinMQ command producer ready.");
+  }
 }
 
 async function startStreamer() {
-    const feedbackKeys = Object.keys(feedbackChannelMap);
-    const streamer = await client.openStreamer(feedbackKeys);
-    console.log('Streamer Open');
+  const feedbackKeys = Object.keys(feedbackChannelMap);
+  const streamer = await client.openStreamer(feedbackKeys);
+  console.log("Streamer open");
 
-    try {
-        for await (const frame of streamer) {
-            const currentFrame = frame.at(-1);
+  try {
+    for await (const frame of streamer) {
+      const currentFrame = frame.at(-1);
+      const [feedbackKey] = Object.keys(currentFrame);
+      const controlID = feedbackKey.endsWith("-F")
+        ? feedbackKey.slice(0, -2)
+        : feedbackKey;
+      const value = currentFrame[feedbackKey];
 
-            for (const [feedbackKey, value] of Object.entries(currentFrame)) {
-                if (!feedbackKey.endsWith("-F")) continue;
+      const commandPacket = {
+        Source: "Synnax Console",
+        "Time Stamp": Date.now(),
+        Data: { [controlID]: value },
+      };
 
-                const controlID = feedbackKey.slice(0, -2);
-                const commandPacket = {
-                    Source: "Synnax Console",
-                    "Time Stamp": TimeStamp.now().value,
-                    Data: { [controlID]: value }
-                };
-
-                await amqpChannel.publish(
-                    "CMD_BC",
-                    "",
-                    Buffer.from(JSON.stringify(commandPacket))
-                );
-                console.log("Published command packet:", commandPacket);
-            }
-        }
-    } finally {
-        streamer.close();
-        console.log('Streamer Closed');
+      await amqpChannel.publish("CMD_BC", "", Buffer.from(JSON.stringify(commandPacket)));
+      console.log("Published command packet:", commandPacket);
     }
+  } catch (err) {
+    console.error("Streamer error:", err.message);
+  } finally {
+    streamer.close();
+    console.log("Streamer closed");
+  }
+}
+
+let amqpConn;
+let amqpChannel;
+
+async function setupProducer() {
+  amqpConn = await amqplib.connect(lavinConfig);
+  amqpChannel = await amqpConn.createChannel();
+  await amqpChannel.assertExchange("CMD_BC", "fanout", { durable: true });
+  console.log("LavinMQ command producer ready.");
 }
 
 async function consumeTLM({ exchange, queue }) {
-    const conn = await amqplib.connect(lavinConfig);
-    const ch = await conn.createChannel();
+  const conn = await amqplib.connect(lavinConfig);
+  const ch = await conn.createChannel();
 
-    await ch.assertExchange(exchange, "fanout", { durable: true });
-    await ch.assertQueue(queue, { durable: true });
-    await ch.bindQueue(queue, exchange, "");
+  await ch.assertExchange(exchange, "fanout", { durable: true });
+  await ch.assertQueue(queue, { durable: true });
+  await ch.bindQueue(queue, exchange, "");
 
-    console.log(`Listening to '${exchange}' → '${queue}'`);
+  console.log(`Listening to '${exchange}' → '${queue}'`);
 
-    ch.consume(
-        queue,
-        async (msg) => {
-            if (!msg) return;
+  ch.consume(queue, async (msg) => {
+    if (!msg) return;
 
-            try {
-                const payload = JSON.parse(msg.content.toString());
-                const source = payload.Source;
-                const timestamp = new Date(payload["Time Stamp"]);
-                const data = payload.Data || {};
+    try {
+      const payload = JSON.parse(msg.content.toString());
+      if (!payload?.Data) {
+        ch.ack(msg);
+        return;
+      }
+      await writeToSynnaxChannels(payload);
+    } catch (err) {
+      console.error("Failed to process TLM message:", err.message);
+    }
 
-                if (!source || !timestamp || Object.keys(data).length === 0) {
-                    console.log(`[${exchange}] Skipped malformed message:`, payload);
-                    ch.ack(msg);
-                    return;
-                }
-
-                await writeToSynnaxChannels(payload);
-                ch.ack(msg);
-            } catch (err) {
-                console.error(`[${exchange}] Failed to write to Synnax:`, err);
-                ch.ack(msg);
-            }
-        },
-        { noAck: false }
-    );
+    ch.ack(msg);
+  });
 }
-
-
 
 await createChannels();
 await setupProducer();
 await consumeTLM({ exchange: "TLM", queue: "slinky-tlm" });
-await startStreamer();
 
 async function gracefulShutdown() {
-    console.log('Starting graceful shutdown...');
-    for (const [channel, writer] of Object.entries(writersMap)) {
-        try {
-            await writer.close();
-            console.log('Writer closed for source:', channel);
-        } catch (err) {
-            console.error('Error Closing Writer for:', channel, err.message);
-        }
+  console.log("Graceful shutdown started");
+
+  for (const [channel, writer] of Object.entries(writersMap)) {
+    try {
+      await writer.close();
+      console.log(`Closed writer for ${channel}`);
+    } catch (err) {
+      console.error(`Error closing writer for ${channel}:`, err.message);
     }
+  }
 
-    if (amqpChannel) await amqpChannel.close();
-    if (amqpConn) await amqpConn.close();
-    console.log('AMQP connection closed');
+  if (amqpChannel) await amqpChannel.close();
+  if (amqpConn) await amqpConn.close();
+  console.log("AMQP connection closed");
 
-    process.exit(0);
+  process.exit(0);
 }
 
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
+process.on("SIGINT", gracefulShutdown);
+process.on("SIGTERM", gracefulShutdown);
