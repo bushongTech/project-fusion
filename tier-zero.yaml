@@ -160,43 +160,43 @@ services:
     networks:
       - app-network
 
-  local-login:
-    build: ./Local-Login
-    container_name: local-login
-    ports:
-      - "8501:8501"
-    depends_on:
-      - local-db
-    networks:
-      - app-network
+  # local-login:
+  #   build: ./Local-Login
+  #   container_name: local-login
+  #   ports:
+  #     - "8501:8501"
+  #   depends_on:
+  #     - local-db
+  #   networks:
+  #     - app-network
 
-  local-db:
-    image: postgres:latest
-    container_name: local-db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: demo
-    ports:
-      - "5332:5432"
-    volumes:
-      - local-db-data:/var/lib/postgresql/data
-      - ./Local-Login/db/init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - app-network
+  # local-db:
+  #   image: postgres:latest
+  #   container_name: local-db
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: demo
+  #   ports:
+  #     - "5332:5432"
+  #   volumes:
+  #     - local-db-data:/var/lib/postgresql/data
+  #     - ./Local-Login/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+  #   networks:
+  #     - app-network
 
-  storage-service:
-    build: ./Storage-Service
-    container_name: storage-service
-    ports:
-      - "8502:8502"
-    depends_on:
-      - local-db
-    volumes:
-      - ./config/config.yaml:/app/config/config.yaml:ro
-      - ./config/message_broker_config.yaml:/app/config/message_broker_config.yaml:ro
-    networks:
-      - app-network
+  # storage-service:
+  #   build: ./Storage-Service
+  #   container_name: storage-service
+  #   ports:
+  #     - "8502:8502"
+  #   depends_on:
+  #     - local-db
+  #   volumes:
+  #     - ./config/config.yaml:/app/config/config.yaml:ro
+  #     - ./config/message_broker_config.yaml:/app/config/message_broker_config.yaml:ro
+  #   networks:
+  #     - app-network
 
 volumes:
   local-db-data:

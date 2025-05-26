@@ -12,7 +12,7 @@ brokers:
           - name: slinky-tlm
           - name: telemetry-center
           - name: storage-service-tlm
-          - name: fusion-tlm
+          - name: fusion
       - name: CMD_BC
         type: "fanout"
         queues:
@@ -20,7 +20,7 @@ brokers:
           - name: command-center
           - name: translator-udp
           - name: storage-service-cmd
-          - name: fusion-cmd
+          - name: multi-translator-sim
       - name: DIR
         type: "fanout"
         queues:
