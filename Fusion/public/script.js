@@ -116,8 +116,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         simToggle.addEventListener("change", () => {
           const id = component.id;
           if (simToggle.checked) {
+            card.classList.add("simulating");
             simControls.style.display = "flex";
           } else {
+            card.classList.remove("simulating");
             simControls.style.display = "none";
             if (simulationIntervals[id]) {
               clearInterval(simulationIntervals[id]);
@@ -149,6 +151,15 @@ document.addEventListener("DOMContentLoaded", async () => {
           }, intervalMs);
         });
       }
+
+      // Shared for both control and sensor
+      simToggle.addEventListener("change", () => {
+        if (simToggle.checked) {
+          card.classList.add("simulating");
+        } else {
+          card.classList.remove("simulating");
+        }
+      });
 
       container.appendChild(card);
     });
