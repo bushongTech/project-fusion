@@ -8,6 +8,8 @@ const brokerConfigPath = "/config/message_broker_config.yaml";
 const rawBrokerYaml = fs.readFileSync(brokerConfigPath, "utf8");
 const parsedBroker = yaml.load(rawBrokerYaml);
 const lavin = parsedBroker.brokers.lavinmq;
+let amqpConn;
+let amqpChannel;
 
 const lavinConfig = {
     protocol: "amqp",
@@ -226,8 +228,7 @@ async function consumeTLM({ exchange, queue }) {
     );
 }
 
-let amqpConn;
-let amqpChannel;
+
 
 await createChannels();
 await setupProducer();
