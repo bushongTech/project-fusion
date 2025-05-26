@@ -55,21 +55,22 @@ async function createConnection(config) {
 function broadcastPacket(type, payload) {
   const packet = { type, payload };
 
-  // Always stream to SSE clients
+  // Stream to connected SSE clients
   clients.forEach((client) => client.write(`data: ${JSON.stringify(packet)}\n\n`));
 
-  // Only publish command packets to LavinMQ
-  if (type !== "command") return;
+  if (!publisherChannel) return;
 
-  if (publisherChannel) {
-    try {
-      const exchangeName = "CMD_BC";
-      publisherChannel.assertExchange(exchangeName, "fanout", { durable: true });
-      publisherChannel.publish(exchangeName, "", Buffer.from(JSON.stringify(payload)));
-      console.log(`[AMQP] Published packet to exchange '${exchangeName}'`);
-    } catch (err) {
-      console.error("[AMQP] Failed to publish packet:", err);
-    }
+  let exchangeName;
+  if (type === "telemetry") exchangeName = "TLM";
+  else if (type === "command") exchangeName = "CMD_BC";
+  else return;
+
+  try {
+    publisherChannel.assertExchange(exchangeName, "fanout", { durable: true });
+    publisherChannel.publish(exchangeName, "", Buffer.from(JSON.stringify(payload)));
+    console.log(`[AMQP] Published ${type} packet to exchange '${exchangeName}'`);
+  } catch (err) {
+    console.error("[AMQP] Failed to publish packet:", err.message);
   }
 }
 
@@ -91,29 +92,6 @@ function loadComponentConfig() {
   }
 }
 
-async function setupExchangesAndQueues() {
-  const brokerConfig = jsyaml.load(fs.readFileSync(BROKER_CONFIG_PATH, "utf8"));
-  const conn = await createConnection(lavinConfig);
-  const channel = await conn.createChannel();
-
-  if (brokerConfig?.brokers?.lavinmq?.exchanges) {
-    for (const exchange of brokerConfig.brokers.lavinmq.exchanges) {
-      console.log(`[LAVIN] Configuring exchange: ${exchange.name}`);
-      await channel.assertExchange(exchange.name, "fanout", { durable: true });
-      for (const queue of exchange.queues || []) {
-        console.log(`[LAVIN] Binding queue: ${queue.name}`);
-        await channel.assertQueue(queue.name, { durable: true });
-        await channel.bindQueue(queue.name, exchange.name, "");
-      }
-    }
-  }
-
-  setTimeout(() => {
-    channel.close();
-    conn.close();
-  }, 500);
-}
-
 // --- AMQP Consumers --- //
 async function startConsumers() {
   const conn = await createConnection(lavinConfig);
@@ -127,10 +105,7 @@ async function startConsumers() {
 
     const data = JSON.parse(text);
 
-    // Skip loopback commands sent from Fusion
-    if (data.Source === "Fusion") {
-      return channel.ack(msg);
-    }
+    if (data.Source === "Fusion") return channel.ack(msg);
 
     if (data.Data) {
       Object.entries(data.Data).forEach(([id, value]) => {
@@ -166,15 +141,8 @@ app.post("/api/command", (req, res) => {
   const { id, value } = req.body;
   console.log("[SERVER] /api/command received:", { id, value });
 
-  if (!componentMap[id]) {
-    console.warn("[SERVER] Unknown ID:", id);
-    return res.status(400).send("Invalid component ID");
-  }
-
-  if (componentMap[id].type !== "control") {
-    console.warn("[SERVER] ID is not a control:", id);
-    return res.status(400).send("Component is not a control");
-  }
+  if (!componentMap[id]) return res.status(400).send("Invalid component ID");
+  if (componentMap[id].type !== "control") return res.status(400).send("Component is not a control");
 
   const packet = {
     Source: "Fusion",
@@ -190,16 +158,9 @@ app.post("/api/simulate", (req, res) => {
   const { id, value } = req.body;
   console.log("[SERVER] /api/simulate received:", { id, value });
 
-  if (!componentMap[id]) {
-    console.warn("[SERVER] Unknown ID:", id);
-    return res.status(400).send("Invalid component ID");
-  }
-
-  const type = componentMap[id].type;
-  if (type !== "sensor" && type !== "control") {
-    console.warn("[SERVER] ID is not a sensor or control:", id);
+  if (!componentMap[id]) return res.status(400).send("Invalid component ID");
+  if (componentMap[id].type !== "sensor" && componentMap[id].type !== "control")
     return res.status(400).send("Component is not a sensor or control");
-  }
 
   const packet = {
     Source: "Fusion",
@@ -207,7 +168,7 @@ app.post("/api/simulate", (req, res) => {
     Data: { [id]: value },
   };
 
-  broadcastPacket("telemetry", packet); // Only publish to TLM
+  broadcastPacket("telemetry", packet);
   res.sendStatus(200);
 });
 
@@ -219,7 +180,6 @@ app.get("/events", (req, res) => {
   res.flushHeaders();
 
   clients.push(res);
-
   req.on("close", () => {
     const index = clients.indexOf(res);
     if (index !== -1) clients.splice(index, 1);
@@ -237,6 +197,29 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`Fusion running at http://localhost:${PORT}`);
   });
+}
+
+async function setupExchangesAndQueues() {
+  const brokerConfig = jsyaml.load(fs.readFileSync(BROKER_CONFIG_PATH, "utf8"));
+  const conn = await createConnection(lavinConfig);
+  const channel = await conn.createChannel();
+
+  if (brokerConfig?.brokers?.lavinmq?.exchanges) {
+    for (const exchange of brokerConfig.brokers.lavinmq.exchanges) {
+      console.log(`[LAVIN] Configuring exchange: ${exchange.name}`);
+      await channel.assertExchange(exchange.name, "fanout", { durable: true });
+      for (const queue of exchange.queues || []) {
+        console.log(`[LAVIN] Binding queue: ${queue.name}`);
+        await channel.assertQueue(queue.name, { durable: true });
+        await channel.bindQueue(queue.name, exchange.name, "");
+      }
+    }
+  }
+
+  setTimeout(() => {
+    channel.close();
+    conn.close();
+  }, 500);
 }
 
 start();
