@@ -1,67 +1,59 @@
 import asyncio
 import aio_pika
+import yaml
 import json
 import time
 
-LAVINMQ_HOST = "lavinmq0"
-QUEUE_NAME = "multi-translator-sim"
+CONFIG_PATH = "/config/message_broker_config.yaml"
+
 CMD_EXCHANGE = "CMD_BC"
 TLM_EXCHANGE = "TLM"
+CMD_QUEUE = "multi-translator-sim-cmd"
+TLM_QUEUE = "multi-translator-sim-tlm"
 
 async def main():
-    connection = await aio_pika.connect_robust(
-        f"amqp://guest:guest@{LAVINMQ_HOST}/"
-    )
+    with open(CONFIG_PATH, "r") as f:
+        config = yaml.safe_load(f)
 
-    async with connection:
-        channel = await connection.channel()
+    lavin = config["brokers"]["lavinmq"]
+    lavin_url = f"amqp://{lavin['username']}:{lavin['password']}@{lavin['host']}:{lavin['port']}/{lavin['virtual_host']}"
 
-        # Use passive=True to avoid redeclaration errors if CMD_BC already exists
-        cmd_exchange = await channel.declare_exchange(
-            CMD_EXCHANGE,
-            aio_pika.ExchangeType.FANOUT,
-            durable=True,
-            passive=True
-        )
+    connection = await aio_pika.connect_robust(lavin_url)
+    channel = await connection.channel()
 
-        queue = await channel.declare_queue(QUEUE_NAME, durable=True)
-        await queue.bind(cmd_exchange)
+    await channel.declare_exchange(CMD_EXCHANGE, aio_pika.ExchangeType.FANOUT, durable=True)
+    await channel.declare_exchange(TLM_EXCHANGE, aio_pika.ExchangeType.FANOUT, durable=True)
 
-        tlm_exchange = await channel.declare_exchange(
-            TLM_EXCHANGE,
-            aio_pika.ExchangeType.FANOUT,
-            durable=True
-        )
+    cmd_queue = await channel.declare_queue(CMD_QUEUE, durable=True)
+    await cmd_queue.bind(exchange=CMD_EXCHANGE)
 
-        print(f"[multi-translator-sim] Listening on queue '{QUEUE_NAME}'...")
+    await channel.declare_queue(TLM_QUEUE, durable=True)
 
-        async with queue.iterator() as queue_iter:
-            async for message in queue_iter:
-                async with message.process():
-                    try:
-                        data = json.loads(message.body.decode())
-                        payload = data.get("Data")
+    print("[multi-translator-sim] Listening on CMD_BC...")
 
-                        if not payload or not isinstance(payload, dict):
-                            continue
+    async with cmd_queue.iterator() as queue_iter:
+        async for message in queue_iter:
+            async with message.process():
+                try:
+                    body = json.loads(message.body.decode())
+                    if not isinstance(body, dict) or "Data" not in body:
+                        continue
 
-                        timestamp = time.time_ns()
+                    timestamp_ns = time.time_ns()
+                    echo_packet = {
+                        "Source": body.get("Source", "Unknown"),
+                        "Time Stamp": str(timestamp_ns),
+                        "Data": body["Data"]
+                    }
 
-                        echo_packet = {
-                            "Source": "multi-translator-sim",
-                            "Time Stamp": timestamp,
-                            "Data": payload,
-                        }
+                    telemetry_exchange = await channel.get_exchange(TLM_EXCHANGE)
+                    await telemetry_exchange.publish(
+                        aio_pika.Message(body=json.dumps(echo_packet).encode()),
+                        routing_key=""
+                    )
 
-                        await tlm_exchange.publish(
-                            aio_pika.Message(
-                                body=json.dumps(echo_packet).encode()
-                            ),
-                            routing_key=""
-                        )
-
-                    except Exception as e:
-                        print(f"[ERROR] Failed to process message: {e}")
+                except Exception as e:
+                    print(f"[multi-translator-sim] Error: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
