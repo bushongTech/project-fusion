@@ -132,7 +132,8 @@ async function createChannels() {
 
 async function writeToSynnaxChannels(receivedData) {
   const tlmData = receivedData.Data;
-  const timestamp = new TimeStamp(receivedData["Time Stamp"]);
+  //const timestamp = new TimeStamp(receivedData["Time Stamp"]);
+  const timestamp = TimeStamp.now()
 
   for (const [channel, value] of Object.entries(tlmData)) {
     try {
