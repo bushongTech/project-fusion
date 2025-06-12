@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+aio-pika
+python-multipart
+pyyaml
+synnax
