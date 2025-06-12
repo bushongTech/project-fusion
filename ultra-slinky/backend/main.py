@@ -1,21 +1,32 @@
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.lavinmq_client import send_command
-from backend.synnax_client import write_to_synnax
+from backend.synnax_client import (
+    create_channels,
+    write_to_synnax,
+    graceful_shutdown
+)
 
 app = FastAPI()
 
-# Serve static files from the frontend folder
 app.mount("/", StaticFiles(directory="frontend", html=True), name="static")
 
-# Enable CORS for all origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+@app.on_event("startup")
+async def startup_event():
+    await create_channels()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await graceful_shutdown()
 
 @app.post("/api/command")
 async def handle_command(request: Request):
