@@ -103,7 +103,6 @@ async def delayed_action(rule, key):
     await asyncio.sleep(rule["delay"])
     await execute_do(rule)
     delayed_tasks.pop(key, None)
-
 async def create_channels():
     with open(CONFIG_PATH) as f:
         parsed = yaml.safe_load(f)
