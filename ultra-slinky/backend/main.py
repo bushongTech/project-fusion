@@ -1,22 +1,11 @@
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import asyncio
-import os
-
-from synnax_client import (
-    create_channels,
-    graceful_shutdown,
-    add_bang_bang_automation,
-    list_bang_bang_automations,
-    remove_bang_bang_automation,
-)
+import synnax_client
 
 app = FastAPI()
 
-# Allow frontend to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,52 +13,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static frontend files
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
-
-@app.get("/", response_class=HTMLResponse)
-async def get_index():
-    return FileResponse("frontend/index.html")
-
-@app.get("/automations")
-async def get_automations():
-    return list_bang_bang_automations()
-
-@app.post("/automations")
-async def create_automation(request: Request):
-    data = await request.json()
-    try:
-        watch = data["watch"]
-        threshold = float(data["threshold"])
-        do = data["do"]
-        do_value = float(data["do_value"])
-        add_bang_bang_automation(watch, threshold, do, do_value)
-        return {"status": "added", "rule": f"{watch} → {do}"}
-    except (KeyError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid automation rule: {e}")
-
-@app.delete("/automations")
-async def delete_automation(request: Request):
-    data = await request.json()
-    try:
-        watch = data["watch"]
-        do = data["do"]
-        result = remove_bang_bang_automation(watch, do)
-        if result:
-            return {"status": "removed", "rule": f"{watch} → {do}"}
-        else:
-            raise HTTPException(status_code=404, detail="Rule not found")
-    except KeyError:
-        raise HTTPException(status_code=400, detail="Missing required fields")
-
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(create_channels())
+    asyncio.create_task(synnax_client.create_channels())
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await graceful_shutdown()
+    await synnax_client.graceful_shutdown()
+
+@app.get("/automations")
+def get_automations():
+    return synnax_client.list_automations()
+
+@app.post("/automations")
+def add_automation(rule: dict):
+    required_keys = ["type", "watch", "do", "do_value"]
+    for key in required_keys:
+        if key not in rule:
+            raise HTTPException(status_code=400, detail=f"Missing key: {key}")
+
+    rule_type = rule["type"]
+    if rule_type not in ["bang-bang", "range", "delayed", "rising", "falling"]:
+        raise HTTPException(status_code=400, detail="Unsupported automation type")
+
+    if rule_type == "bang-bang" and "threshold" not in rule:
+        raise HTTPException(status_code=400, detail="Missing 'threshold' for bang-bang rule")
+    if rule_type == "range" and ("min" not in rule or "max" not in rule):
+        raise HTTPException(status_code=400, detail="Missing 'min' or 'max' for range rule")
+    if rule_type == "delayed" and ("threshold" not in rule or "delay" not in rule):
+        raise HTTPException(status_code=400, detail="Missing 'threshold' or 'delay' for delayed rule")
+    if rule_type in ["rising", "falling"] and "threshold" not in rule:
+        raise HTTPException(status_code=400, detail="Missing 'threshold' for edge rule")
+
+    synnax_client.add_automation(rule)
+    return {"status": "added", "rule": rule}
+
+@app.delete("/automations")
+def delete_automation(watch: str, do: str):
+    success = synnax_client.remove_automation(watch, do)
+    if not success:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"status": "deleted", "watch": watch, "do": do}
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8500))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8500)
