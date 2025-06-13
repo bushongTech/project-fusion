@@ -1,14 +1,41 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Ultra Slinky</title>
-  <script defer src="script.js"></script>
+  <meta charset="UTF-8">
+  <title>Ultra Slinky Automations</title>
   <link rel="stylesheet" href="styles.css">
+  <script defer src="script.js"></script>
 </head>
 <body>
-  <h1>Ultra Slinky Control Panel</h1>
-  <button onclick="sendCommand('EV-0200', 1)">Open Valve</button>
-  <button onclick="sendCommand('EV-0200', 0)">Close Valve</button>
-  <div id="status"></div>
+  <div class="container">
+    <h1>Define Bang-Bang Automations</h1>
+
+    <form id="automation-form">
+      <label>
+        Watch:
+        <input type="text" id="watch" placeholder="e.g. TOT-0100" required>
+      </label>
+
+      <label>
+        Threshold:
+        <input type="number" id="threshold" step="any" required>
+      </label>
+
+      <label>
+        Do:
+        <input type="text" id="do" placeholder="e.g. PV-0100" required>
+      </label>
+
+      <label>
+        Do Value:
+        <input type="number" id="doValue" step="any" required>
+      </label>
+
+      <button type="submit">Add Rule</button>
+    </form>
+
+    <h2>Active Automation Rules</h2>
+    <ul id="automation-list"></ul>
+  </div>
 </body>
 </html>
