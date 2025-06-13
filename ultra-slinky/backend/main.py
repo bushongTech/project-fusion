@@ -9,7 +9,7 @@ from synnax_client import load_existing_automations, add_automation_rule, remove
 app = FastAPI()
 
 # Static frontend files
-app.mount("/", StaticFiles(directory="public", html=True), name="static")
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 AUTOMATIONS_FILE = Path("automations.json")
 
