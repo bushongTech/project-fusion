@@ -1,12 +1,14 @@
+import os
 import time
-import yaml
 import json
+import yaml
 import asyncio
 import aio_pika
 from synnax import Synnax, TimeStamp, DataType
 
 CONFIG_PATH = "/config/config.yaml"
 BROKER_CONFIG_PATH = "/config/message_broker_config.yaml"
+AUTOMATIONS_FILE = "automations.json"
 
 sensor_channels = {}
 control_channels = {}
@@ -100,6 +102,7 @@ async def create_channels():
         except Exception as e:
             print(f"Error setting up channel {channel_id}: {e}")
 
+    load_automations()
     asyncio.create_task(consume_tlm())
     asyncio.create_task(start_feedback_streamer())
 
@@ -186,11 +189,30 @@ async def start_feedback_streamer():
                     )
                     print(f"[ultra-slinky] Feedback: {control_id} = {value}")
 
+def load_automations():
+    if os.path.exists(AUTOMATIONS_FILE):
+        with open(AUTOMATIONS_FILE, "r") as f:
+            data = json.load(f)
+            for key, val in data.items():
+                watch, do = key.split("→")
+                tlm_watch_values[(watch, do)] = val
+        print(f"[ultra-slinky] Loaded {len(tlm_watch_values)} automations")
+
+def save_automations():
+    data = {
+        f"{watch}→{do}": val
+        for (watch, do), val in tlm_watch_values.items()
+    }
+    with open(AUTOMATIONS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"[ultra-slinky] Saved {len(data)} automations")
+
 def add_bang_bang_automation(watch_channel: str, threshold: float, do_channel: str, do_value: float):
     tlm_watch_values[(watch_channel, do_channel)] = {
         "threshold": threshold,
         "do_value": do_value
     }
+    save_automations()
 
 def list_bang_bang_automations():
     return {
@@ -204,7 +226,9 @@ def list_bang_bang_automations():
     }
 
 def remove_bang_bang_automation(watch_channel: str, do_channel: str):
-    return tlm_watch_values.pop((watch_channel, do_channel), None)
+    removed = tlm_watch_values.pop((watch_channel, do_channel), None)
+    save_automations()
+    return removed
 
 async def graceful_shutdown():
     if streamer:
