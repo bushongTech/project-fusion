@@ -1,69 +1,75 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi import status
+import uvicorn
+import asyncio
+import os
 
-from backend.synnax_client import (
+from synnax_client import (
     create_channels,
     graceful_shutdown,
     add_bang_bang_automation,
     list_bang_bang_automations,
-    remove_bang_bang_automation
+    remove_bang_bang_automation,
 )
 
 app = FastAPI()
 
-app.mount("/", StaticFiles(directory="frontend", html=True), name="static")
-
+# Allow frontend to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
+
+# Serve static frontend files
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+@app.get("/", response_class=HTMLResponse)
+async def get_index():
+    return FileResponse("frontend/index.html")
+
+@app.get("/automations")
+async def get_automations():
+    return list_bang_bang_automations()
+
+@app.post("/automations")
+async def create_automation(request: Request):
+    data = await request.json()
+    try:
+        watch = data["watch"]
+        threshold = float(data["threshold"])
+        do = data["do"]
+        do_value = float(data["do_value"])
+        add_bang_bang_automation(watch, threshold, do, do_value)
+        return {"status": "added", "rule": f"{watch} → {do}"}
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid automation rule: {e}")
+
+@app.delete("/automations")
+async def delete_automation(request: Request):
+    data = await request.json()
+    try:
+        watch = data["watch"]
+        do = data["do"]
+        result = remove_bang_bang_automation(watch, do)
+        if result:
+            return {"status": "removed", "rule": f"{watch} → {do}"}
+        else:
+            raise HTTPException(status_code=404, detail="Rule not found")
+    except KeyError:
+        raise HTTPException(status_code=400, detail="Missing required fields")
 
 @app.on_event("startup")
 async def startup_event():
-    await create_channels()
+    asyncio.create_task(create_channels())
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await graceful_shutdown()
 
-@app.post("/api/automation/bang-bang")
-async def define_bang_bang(request: Request):
-    body = await request.json()
-    watch_channel = body["watch"]
-    threshold = float(body["threshold"])
-    do_channel = body["do"]
-    do_value = float(body["do_value"])
-
-    add_bang_bang_automation(watch_channel, threshold, do_channel, do_value)
-
-    return {
-        "status": "rule added",
-        "watch": watch_channel,
-        "threshold": threshold,
-        "do": do_channel,
-        "do_value": do_value
-    }
-
-@app.get("/api/automation/bang-bang")
-async def get_all_bang_bang_rules():
-    return list_bang_bang_automations()
-
-@app.delete("/api/automation/bang-bang")
-async def delete_bang_bang_rule(request: Request):
-    body = await request.json()
-    watch_channel = body["watch"]
-    do_channel = body["do"]
-
-    removed = remove_bang_bang_automation(watch_channel, do_channel)
-    if removed is None:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"error": "Rule not found"})
-    return {
-        "status": "rule removed",
-        "watch": watch_channel,
-        "do": do_channel
-    }
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8500))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
