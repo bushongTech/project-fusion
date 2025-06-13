@@ -1,13 +1,17 @@
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi import status
 
 from backend.lavinmq_client import send_command
 from backend.synnax_client import (
     create_channels,
     write_to_synnax,
     graceful_shutdown,
-    add_bang_bang_automation
+    add_bang_bang_automation,
+    list_bang_bang_automations,
+    remove_bang_bang_automation
 )
 
 app = FastAPI()
@@ -57,3 +61,18 @@ async def define_bang_bang(request: Request):
         "do": do_channel,
         "do_value": do_value
     }
+
+@app.get("/api/automation/bang-bang")
+async def get_all_bang_bang_rules():
+    return list_bang_bang_automations()
+
+@app.delete("/api/automation/bang-bang")
+async def delete_bang_bang_rule(request: Request):
+    body = await request.json()
+    watch_channel = body["watch"]
+    do_channel = body["do"]
+
+    removed = remove_bang_bang_automation(watch_channel, do_channel)
+    if removed is None:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"error": "Rule not found"})
+    return {"status": "rule removed", "watch": watch_channel, "do": do_channel}
