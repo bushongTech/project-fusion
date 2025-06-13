@@ -1,248 +1,202 @@
+import asyncio
+import json
 import os
 import time
-import json
-import yaml
-import asyncio
+from typing import Dict, Any
+
 import aio_pika
-from synnax import Synnax, TimeStamp, DataType
+import yaml
+from synnax import Synnax, DataType, TimeStamp
 
-CONFIG_PATH = "/config/config.yaml"
-BROKER_CONFIG_PATH = "/config/message_broker_config.yaml"
-AUTOMATIONS_FILE = "automations.json"
+CONFIG_PATH = "config/config.yaml"
+BROKER_CONFIG_PATH = "config/message_broker_config.yaml"
+AUTOMATION_RULES_PATH = "automations.json"
 
-sensor_channels = {}
-control_channels = {}
-feedback_channels = {}
-time_channels = {}
-writers = {}
-automation_writers = {}
-tlm_watch_values = {}  # (watch, do) → { threshold, do_value }
+CMD_EXCHANGE = "CMD_BC"
+TLM_EXCHANGE = "TLM"
+TLM_QUEUE = "ultra-slinky-tlm"
 
-client = Synnax(
-    host="synnax",
-    port=9095,
-    username="synnax",
-    password="seldon",
-    secure=False
-)
+synnax_client = Synnax("synnax", 9095, "synnax", "seldon", secure=False)
 
-amqp_conn = None
-amqp_channel = None
-streamer = None
+time_channel_map = {}
+channel_map = {}
+writers_map = {}
 
-def map_channel_ids_from_yaml():
-    with open(CONFIG_PATH, "r") as f:
-        parsed = yaml.safe_load(f)
+automations = []
 
-    id_map = {}
-    if "channels" in parsed:
-        for group in parsed["channels"].values():
-            if "channels" in group:
-                for id, channel in group["channels"].items():
-                    id_map[id] = channel["type"]
-    return id_map
+def load_automation_rules():
+    global automations
+    if os.path.exists(AUTOMATION_RULES_PATH):
+        with open(AUTOMATION_RULES_PATH, "r") as f:
+            automations = json.load(f)
+
+def save_automation_rules():
+    with open(AUTOMATION_RULES_PATH, "w") as f:
+        json.dump(automations, f, indent=2)
+
+def add_automation(rule: Dict[str, Any]):
+    automations.append(rule)
+    save_automation_rules()
+
+def remove_automation(watch: str, do: str) -> bool:
+    global automations
+    before = len(automations)
+    automations = [r for r in automations if not (r["watch"] == watch and r["do"] == do)]
+    save_automation_rules()
+    return len(automations) < before
+
+def list_automations():
+    return automations
+
+def should_trigger(rule: Dict[str, Any], value: float, last_value: float = None) -> bool:
+    typ = rule["type"]
+    if typ == "bang-bang":
+        return value >= rule["threshold"]
+    if typ == "range":
+        return rule["min"] <= value <= rule["max"]
+    if typ == "delayed":
+        return value >= rule["threshold"]
+    if typ == "rising" and last_value is not None:
+        return last_value < rule["threshold"] <= value
+    if typ == "falling" and last_value is not None:
+        return last_value > rule["threshold"] >= value
+    return False
+
+delayed_tasks = {}
+
+async def execute_do(rule):
+    do = rule["do"]
+    val = rule["do_value"]
+    writer = writers_map.get(do)
+    if writer:
+        ts = TimeStamp.now()
+        await writer.write({
+            time_channel_map[f"{do}-T"]: ts,
+            channel_map[do]: val
+        })
+
+async def handle_tlm_packet(payload, last_values):
+    ts = TimeStamp.now()
+    data = payload.get("Data", {})
+    for k, v in data.items():
+        last_v = last_values.get(k)
+        last_values[k] = v
+
+        if k in channel_map and k in writers_map:
+            await writers_map[k].write({
+                time_channel_map[f"{k}-T"]: ts,
+                channel_map[k]: v
+            })
+
+        for rule in automations:
+            if rule["watch"] == k:
+                if rule["type"] == "delayed" and should_trigger(rule, v, last_v):
+                    key = f"{k}->{rule['do']}"
+                    if key not in delayed_tasks:
+                        delayed_tasks[key] = asyncio.create_task(
+                            delayed_action(rule, key)
+                        )
+                elif should_trigger(rule, v, last_v):
+                    await execute_do(rule)
+
+async def delayed_action(rule, key):
+    await asyncio.sleep(rule["delay"])
+    await execute_do(rule)
+    delayed_tasks.pop(key, None)
 
 async def create_channels():
-    global amqp_conn, amqp_channel
+    with open(CONFIG_PATH) as f:
+        parsed = yaml.safe_load(f)
 
-    with open(BROKER_CONFIG_PATH, "r") as f:
-        broker_cfg = yaml.safe_load(f)
-    lavin = broker_cfg["brokers"]["lavinmq"]
-    lavin_url = f"amqp://{lavin['username']}:{lavin['password']}@{lavin['host']}:{lavin['port']}/{lavin['virtual_host']}"
-
-    amqp_conn = await aio_pika.connect_robust(lavin_url)
-    amqp_channel = await amqp_conn.channel()
-    await amqp_channel.declare_exchange("CMD_BC", aio_pika.ExchangeType.FANOUT, durable=True)
-
-    channel_map = map_channel_ids_from_yaml()
-    start = TimeStamp.now()
-
-    for channel_id, ch_type in channel_map.items():
-        try:
-            time_index = client.channels.create({
+    for group in parsed.get("channels", {}).values():
+        for channel_id, props in group["channels"].items():
+            if props["type"] not in ["sensor", "control"]:
+                continue
+            ts_channel = await synnax_client.channels.create({
                 "name": f"{channel_id}-T",
-                "data_type": DataType.TIMESTAMP,
-                "is_index": True
+                "dataType": "timestamp",
+                "isIndex": True
             }, retrieve_if_name_exists=True)
 
-            data_channel = client.channels.create({
+            data_channel = await synnax_client.channels.create({
                 "name": channel_id,
-                "data_type": DataType.FLOAT32,
-                "index": time_index.key
+                "dataType": DataType.FLOAT32,
+                "index": ts_channel.key
             }, retrieve_if_name_exists=True)
 
-            time_channels[f"{channel_id}-T"] = time_index.key
+            time_channel_map[f"{channel_id}-T"] = ts_channel.key
+            channel_map[channel_id] = data_channel.key
 
-            if ch_type == "sensor":
-                sensor_channels[channel_id] = data_channel.key
-                writers[channel_id] = client.open_writer(
-                    start=start,
-                    channels=[time_index.key, data_channel.key],
-                    authorities=[255, 255],
-                    enable_auto_commit=True
-                )
+            writer = await synnax_client.open_writer({
+                "start": TimeStamp.now(),
+                "channels": [ts_channel.key, data_channel.key],
+                "authorities": [255, 255],
+                "enableAutoCommit": True
+            })
+            writers_map[channel_id] = writer
 
-            elif ch_type == "control":
-                control_channels[channel_id] = data_channel.key
-
-                feedback_channel = client.channels.create({
-                    "name": f"{channel_id}-F",
-                    "data_type": DataType.FLOAT32,
-                    "virtual": True
-                }, retrieve_if_name_exists=True)
-
-                feedback_channels[f"{channel_id}-F"] = feedback_channel.key
-
-                writers[channel_id] = client.open_writer(
-                    start=start,
-                    channels=[time_index.key, data_channel.key, feedback_channel.key],
-                    authorities=[255, 255, 0],
-                    enable_auto_commit=True
-                )
-        except Exception as e:
-            print(f"Error setting up channel {channel_id}: {e}")
-
-    load_automations()
-    asyncio.create_task(consume_tlm())
+    load_automation_rules()
+    await setup_lavinmq()
     asyncio.create_task(start_feedback_streamer())
 
-async def write_to_synnax(channel_id: str, value):
-    timestamp = TimeStamp.now()
-    if channel_id in sensor_channels:
-        await writers[channel_id].write({
-            time_channels[f"{channel_id}-T"]: timestamp,
-            sensor_channels[channel_id]: value
-        })
-    elif channel_id in control_channels:
-        await writers[channel_id].write({
-            time_channels[f"{channel_id}-T"]: timestamp,
-            control_channels[channel_id]: value
-        })
-
-async def consume_tlm():
+async def setup_lavinmq():
     with open(BROKER_CONFIG_PATH, "r") as f:
-        config = yaml.safe_load(f)
-    lavin = config["brokers"]["lavinmq"]
-    lavin_url = f"amqp://{lavin['username']}:{lavin['password']}@{lavin['host']}:{lavin['port']}/{lavin['virtual_host']}"
+        broker = yaml.safe_load(f)["brokers"]["lavinmq"]
 
-    connection = await aio_pika.connect_robust(lavin_url)
-    channel = await connection.channel()
-    await channel.declare_exchange("TLM", aio_pika.ExchangeType.FANOUT, durable=True)
-    queue = await channel.declare_queue("ultra-slinky-tlm", durable=True)
-    await queue.bind("TLM")
+    url = f"amqp://{broker['username']}:{broker['password']}@{broker['host']}:{broker['port']}/{broker['virtual_host']}"
+    conn = await aio_pika.connect_robust(url)
+    ch = await conn.channel()
+    await ch.declare_exchange(TLM_EXCHANGE, aio_pika.ExchangeType.FANOUT, durable=True)
+    q = await ch.declare_queue(TLM_QUEUE, durable=True)
+    await q.bind(exchange=TLM_EXCHANGE)
 
-    async with queue.iterator() as messages:
-        async for message in messages:
-            async with message.process():
-                try:
-                    data = json.loads(message.body.decode())
-                    if "Data" in data:
-                        await handle_tlm(data)
-                except Exception as e:
-                    print(f"Error processing TLM: {e}")
+    last_values = {}
 
-async def handle_tlm(packet):
-    tlm_data = packet["Data"]
-    timestamp = TimeStamp.now()
-
-    for channel, value in tlm_data.items():
-        await write_to_synnax(channel, value)
-
-        for (watch, do), config in tlm_watch_values.items():
-            if watch == channel and value >= config["threshold"]:
-                print(f"[ultra-slinky] Automation triggered: {watch} ≥ {config['threshold']} → {do} = {config['do_value']}")
-                writer = client.open_writer(
-                    start=timestamp,
-                    channels=[time_channels[f"{do}-T"], control_channels[do]],
-                    authorities=[254, 254],
-                    enable_auto_commit=True
-                )
-                automation_writers[do] = writer
-                await writer.write({
-                    time_channels[f"{do}-T"]: timestamp,
-                    control_channels[do]: config["do_value"]
-                })
+    async with q.iterator() as it:
+        async for msg in it:
+            async with msg.process():
+                payload = json.loads(msg.body.decode())
+                await handle_tlm_packet(payload, last_values)
 
 async def start_feedback_streamer():
-    global streamer
-    feedback_keys = list(feedback_channels.values())
+    feedback_keys = [k for k in channel_map if k.endswith("-F")]
     if not feedback_keys:
         return
-
-    streamer = client.open_streamer(feedback_keys)
-    print("[ultra-slinky] Feedback streamer started")
-
+    streamer = await synnax_client.open_streamer(feedback_keys)
     async for frame in streamer:
-        current = frame[-1]
-        for feedback_key, value in current.items():
-            for k, v in feedback_channels.items():
-                if v == feedback_key:
-                    control_id = k.replace("-F", "")
-                    packet = {
-                        "Source": "Synnax Console",
-                        "Time Stamp": str(time.time_ns()),
-                        "Data": {control_id: value}
-                    }
-                    await amqp_channel.default_exchange.publish(
-                        aio_pika.Message(body=json.dumps(packet).encode()),
-                        routing_key=""
-                    )
-                    print(f"[ultra-slinky] Feedback: {control_id} = {value}")
+        latest = frame[-1]
+        for key, value in latest.items():
+            if key.endswith("-F"):
+                do = key[:-2]
+                command_packet = {
+                    "Source": "Synnax Console",
+                    "Time Stamp": str(time.time_ns()),
+                    "Data": {do: value}
+                }
+                await publish_cmd(command_packet)
 
-def load_automations():
-    if os.path.exists(AUTOMATIONS_FILE):
-        with open(AUTOMATIONS_FILE, "r") as f:
-            data = json.load(f)
-            for key, val in data.items():
-                watch, do = key.split("→")
-                tlm_watch_values[(watch, do)] = val
-        print(f"[ultra-slinky] Loaded {len(tlm_watch_values)} automations")
+cmd_channel = None
+cmd_conn = None
 
-def save_automations():
-    data = {
-        f"{watch}→{do}": val
-        for (watch, do), val in tlm_watch_values.items()
-    }
-    with open(AUTOMATIONS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"[ultra-slinky] Saved {len(data)} automations")
+async def publish_cmd(packet: dict):
+    global cmd_conn, cmd_channel
+    if cmd_conn is None:
+        with open(BROKER_CONFIG_PATH, "r") as f:
+            broker = yaml.safe_load(f)["brokers"]["lavinmq"]
+        url = f"amqp://{broker['username']}:{broker['password']}@{broker['host']}:{broker['port']}/{broker['virtual_host']}"
+        cmd_conn = await aio_pika.connect_robust(url)
+        cmd_channel = await cmd_conn.channel()
+        await cmd_channel.declare_exchange(CMD_EXCHANGE, aio_pika.ExchangeType.FANOUT, durable=True)
 
-def add_bang_bang_automation(watch_channel: str, threshold: float, do_channel: str, do_value: float):
-    tlm_watch_values[(watch_channel, do_channel)] = {
-        "threshold": threshold,
-        "do_value": do_value
-    }
-    save_automations()
-
-def list_bang_bang_automations():
-    return {
-        f"{watch}->{do}": {
-            "watch": watch,
-            "do": do,
-            "threshold": config["threshold"],
-            "do_value": config["do_value"]
-        }
-        for (watch, do), config in tlm_watch_values.items()
-    }
-
-def remove_bang_bang_automation(watch_channel: str, do_channel: str):
-    removed = tlm_watch_values.pop((watch_channel, do_channel), None)
-    save_automations()
-    return removed
+    await cmd_channel.default_exchange.publish(
+        aio_pika.Message(body=json.dumps(packet).encode()),
+        routing_key=""
+    )
 
 async def graceful_shutdown():
-    if streamer:
-        streamer.close()
-
-    for w in writers.values():
+    for w in writers_map.values():
         await w.close()
-
-    for w in automation_writers.values():
-        await w.close()
-
-    if amqp_channel:
-        await amqp_channel.close()
-    if amqp_conn:
-        await amqp_conn.close()
-
-    print("[ultra-slinky] Shutdown complete")
+    if cmd_channel:
+        await cmd_channel.close()
+    if cmd_conn:
+        await cmd_conn.close()
