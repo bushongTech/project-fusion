@@ -4,38 +4,52 @@
   <meta charset="UTF-8">
   <title>Ultra Slinky Automations</title>
   <link rel="stylesheet" href="styles.css">
-  <script defer src="script.js"></script>
 </head>
 <body>
-  <div class="container">
-    <h1>Define Bang-Bang Automations</h1>
+  <h1>Ultra Slinky Automations</h1>
 
-    <form id="automation-form">
-      <label>
-        Watch:
-        <input type="text" id="watch" placeholder="e.g. TOT-0100" required>
-      </label>
+  <form id="automation-form">
+    <label for="type">Type:</label>
+    <select id="type" name="type">
+      <option value="bang-bang">Bang-Bang</option>
+      <option value="range">Range</option>
+      <option value="delayed">Delayed</option>
+      <option value="rising">Rising Edge</option>
+      <option value="falling">Falling Edge</option>
+    </select>
 
-      <label>
-        Threshold:
-        <input type="number" id="threshold" step="any" required>
-      </label>
+    <label for="watch">Watch Channel:</label>
+    <input type="text" id="watch" name="watch" required>
 
-      <label>
-        Do:
-        <input type="text" id="do" placeholder="e.g. PV-0100" required>
-      </label>
+    <div class="form-group" id="threshold-group" style="display:none;">
+      <label for="threshold">Threshold:</label>
+      <input type="number" step="any" id="threshold" name="threshold">
+    </div>
 
-      <label>
-        Do Value:
-        <input type="number" id="doValue" step="any" required>
-      </label>
+    <div class="form-group" id="min-max-group" style="display:none;">
+      <label for="min">Min:</label>
+      <input type="number" step="any" id="min" name="min">
+      <label for="max">Max:</label>
+      <input type="number" step="any" id="max" name="max">
+    </div>
 
-      <button type="submit">Add Rule</button>
-    </form>
+    <div class="form-group" id="delay-group" style="display:none;">
+      <label for="delay">Delay (seconds):</label>
+      <input type="number" id="delay" name="delay">
+    </div>
 
-    <h2>Active Automation Rules</h2>
-    <ul id="automation-list"></ul>
-  </div>
+    <label for="do">Do Channel:</label>
+    <input type="text" id="do" name="do" required>
+
+    <label for="do_value">Do Value:</label>
+    <input type="number" step="any" id="do_value" name="do_value" required>
+
+    <button type="submit">Add Automation</button>
+  </form>
+
+  <h2>Active Automations</h2>
+  <ul id="automation-list"></ul>
+
+  <script src="script.js"></script>
 </body>
 </html>
