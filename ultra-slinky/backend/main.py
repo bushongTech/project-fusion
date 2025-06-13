@@ -6,7 +6,8 @@ from backend.lavinmq_client import send_command
 from backend.synnax_client import (
     create_channels,
     write_to_synnax,
-    graceful_shutdown
+    graceful_shutdown,
+    add_bang_bang_automation
 )
 
 app = FastAPI()
@@ -38,3 +39,21 @@ async def handle_command(request: Request):
     await write_to_synnax(component_id, value)
 
     return {"status": "sent", "id": component_id, "value": value}
+
+@app.post("/api/automation/bang-bang")
+async def define_bang_bang(request: Request):
+    body = await request.json()
+    watch_channel = body["watch"]
+    threshold = float(body["threshold"])
+    do_channel = body["do"]
+    do_value = float(body["do_value"])
+
+    add_bang_bang_automation(watch_channel, threshold, do_channel, do_value)
+
+    return {
+        "status": "rule added",
+        "watch": watch_channel,
+        "threshold": threshold,
+        "do": do_channel,
+        "do_value": do_value
+    }
