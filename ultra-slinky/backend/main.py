@@ -1,59 +1,55 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 import uvicorn
-import asyncio
-import synnax_client
+import json
+from synnax_client import load_existing_automations, add_automation_rule, remove_automation_rule, automation_lock
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Static frontend files
+app.mount("/", StaticFiles(directory="public", html=True), name="static")
+
+AUTOMATIONS_FILE = Path("automations.json")
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(synnax_client.create_channels())
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    await synnax_client.graceful_shutdown()
+    AUTOMATIONS_FILE.touch(exist_ok=True)
+    if AUTOMATIONS_FILE.read_text().strip() == "":
+        AUTOMATIONS_FILE.write_text("[]")
+    await load_existing_automations(AUTOMATIONS_FILE)
 
 @app.get("/automations")
-def get_automations():
-    return synnax_client.list_automations()
+async def list_automations():
+    async with automation_lock:
+        with AUTOMATIONS_FILE.open("r") as f:
+            return json.load(f)
 
 @app.post("/automations")
-def add_automation(rule: dict):
-    required_keys = ["type", "watch", "do", "do_value"]
-    for key in required_keys:
-        if key not in rule:
-            raise HTTPException(status_code=400, detail=f"Missing key: {key}")
-
-    rule_type = rule["type"]
-    if rule_type not in ["bang-bang", "range", "delayed", "rising", "falling"]:
-        raise HTTPException(status_code=400, detail="Unsupported automation type")
-
-    if rule_type == "bang-bang" and "threshold" not in rule:
-        raise HTTPException(status_code=400, detail="Missing 'threshold' for bang-bang rule")
-    if rule_type == "range" and ("min" not in rule or "max" not in rule):
-        raise HTTPException(status_code=400, detail="Missing 'min' or 'max' for range rule")
-    if rule_type == "delayed" and ("threshold" not in rule or "delay" not in rule):
-        raise HTTPException(status_code=400, detail="Missing 'threshold' or 'delay' for delayed rule")
-    if rule_type in ["rising", "falling"] and "threshold" not in rule:
-        raise HTTPException(status_code=400, detail="Missing 'threshold' for edge rule")
-
-    synnax_client.add_automation(rule)
-    return {"status": "added", "rule": rule}
+async def create_automation(request: Request):
+    data = await request.json()
+    async with automation_lock:
+        with AUTOMATIONS_FILE.open("r+") as f:
+            rules = json.load(f)
+            rules.append(data)
+            f.seek(0)
+            json.dump(rules, f, indent=2)
+            f.truncate()
+    await add_automation_rule(data)
+    return JSONResponse(content={"status": "added"}, status_code=201)
 
 @app.delete("/automations")
-def delete_automation(watch: str, do: str):
-    success = synnax_client.remove_automation(watch, do)
-    if not success:
-        raise HTTPException(status_code=404, detail="Rule not found")
-    return {"status": "deleted", "watch": watch, "do": do}
+async def delete_automation(watch: str, do: str):
+    async with automation_lock:
+        with AUTOMATIONS_FILE.open("r+") as f:
+            rules = json.load(f)
+            new_rules = [r for r in rules if not (r["watch"] == watch and r["do"] == do)]
+            f.seek(0)
+            json.dump(new_rules, f, indent=2)
+            f.truncate()
+    await remove_automation_rule(watch, do)
+    return JSONResponse(content={"status": "deleted"}, status_code=200)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8500)
+    uvicorn.run(app, host="0.0.0.0", port=8500)
