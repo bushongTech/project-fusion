@@ -2,8 +2,8 @@ import time
 import yaml
 import json
 import asyncio
-from synnax import Synnax, TimeStamp, DataType
 import aio_pika
+from synnax import Synnax, TimeStamp, DataType
 
 CONFIG_PATH = "/config/config.yaml"
 BROKER_CONFIG_PATH = "/config/message_broker_config.yaml"
@@ -105,13 +105,11 @@ async def create_channels():
 
 async def write_to_synnax(channel_id: str, value):
     timestamp = TimeStamp.now()
-
     if channel_id in sensor_channels:
         await writers[channel_id].write({
             time_channels[f"{channel_id}-T"]: timestamp,
             sensor_channels[channel_id]: value
         })
-
     elif channel_id in control_channels:
         await writers[channel_id].write({
             time_channels[f"{channel_id}-T"]: timestamp,
@@ -147,26 +145,19 @@ async def handle_tlm(packet):
     for channel, value in tlm_data.items():
         await write_to_synnax(channel, value)
 
-        # check for automation
-        if channel in tlm_watch_values:
-            watch_cfg = tlm_watch_values[channel]
-            if value >= watch_cfg["threshold"]:
-                control = watch_cfg["do"]
-                control_value = watch_cfg["do_value"]
-
-                print(f"[ultra-slinky] Automation triggered: {channel} >= {watch_cfg['threshold']} → {control} = {control_value}")
-
+        for (watch, do), config in tlm_watch_values.items():
+            if watch == channel and value >= config["threshold"]:
+                print(f"[ultra-slinky] Automation triggered: {watch} ≥ {config['threshold']} → {do} = {config['do_value']}")
                 writer = client.open_writer(
                     start=timestamp,
-                    channels=[time_channels[f"{control}-T"], control_channels[control]],
+                    channels=[time_channels[f"{do}-T"], control_channels[do]],
                     authorities=[254, 254],
                     enable_auto_commit=True
                 )
-                automation_writers[control] = writer
-
+                automation_writers[do] = writer
                 await writer.write({
-                    time_channels[f"{control}-T"]: timestamp,
-                    control_channels[control]: control_value
+                    time_channels[f"{do}-T"]: timestamp,
+                    control_channels[do]: config["do_value"]
                 })
 
 async def start_feedback_streamer():
@@ -196,11 +187,24 @@ async def start_feedback_streamer():
                     print(f"[ultra-slinky] Feedback: {control_id} = {value}")
 
 def add_bang_bang_automation(watch_channel: str, threshold: float, do_channel: str, do_value: float):
-    tlm_watch_values[watch_channel] = {
+    tlm_watch_values[(watch_channel, do_channel)] = {
         "threshold": threshold,
-        "do": do_channel,
         "do_value": do_value
     }
+
+def list_bang_bang_automations():
+    return {
+        f"{watch}->{do}": {
+            "watch": watch,
+            "do": do,
+            "threshold": config["threshold"],
+            "do_value": config["do_value"]
+        }
+        for (watch, do), config in tlm_watch_values.items()
+    }
+
+def remove_bang_bang_automation(watch_channel: str, do_channel: str):
+    return tlm_watch_values.pop((watch_channel, do_channel), None)
 
 async def graceful_shutdown():
     if streamer:
