@@ -14,7 +14,7 @@ feedback_channels = {}
 time_channels = {}
 writers = {}
 automation_writers = {}
-tlm_watch_values = {}
+tlm_watch_values = {}  # (watch, do) → { threshold, do_value }
 
 client = Synnax(
     host="synnax",
